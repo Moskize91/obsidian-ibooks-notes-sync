@@ -14,6 +14,8 @@
     "dev": "tsx src/cli.ts",
     "build": "tsup",
     "start": "node dist/cli.js",
+    "sync": "tsx src/cli.ts init --force --output-dir . --managed-dir-name sync && tsx src/cli.ts sync",
+    "sync:dry": "tsx src/cli.ts init --force --output-dir . --managed-dir-name sync && tsx src/cli.ts sync --dry-run",
     "test": "tsx --test tests/**/*.test.ts",
     "typecheck": "tsc --noEmit",
     "lint": "eslint . --ext .ts",
