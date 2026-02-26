@@ -1,4 +1,5 @@
 export type BookFormat = "EPUB" | "PDF" | "IBOOKS" | "UNKNOWN";
+export type SyncableBookFormat = "EPUB" | "PDF";
 
 export type LogLevel = "info" | "warn" | "error";
 
@@ -68,4 +69,19 @@ export type SyncStats = {
   failedBooks: number;
   skippedBooks: number;
   generatedFiles: number;
+};
+
+export type SyncAssetState = {
+  assetId: string;
+  title: string;
+  format: SyncableBookFormat;
+  hash: string;
+  bookFileRelativePath: string;
+  pdfAssetDirRelativePath: string | null;
+};
+
+export type SyncState = {
+  version: 1;
+  updatedAt: string;
+  assets: Record<string, SyncAssetState>;
 };

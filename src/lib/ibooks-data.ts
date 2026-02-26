@@ -27,6 +27,11 @@ type RawPdfFallbackRow = {
   fallbackCount: number;
 };
 
+type RawAssetAnnotationModificationRow = {
+  assetId: string;
+  maxModificationDate: number | null;
+};
+
 const APPLE_EPOCH_SECONDS = 978307200;
 
 function toFormat(contentType: number): BookFormat {
@@ -187,6 +192,35 @@ export function readPdfFallbackCounts(annotationDbPath: string, libraryDbPath: s
   const result = new Map<string, number>();
   for (const row of rows) {
     result.set(row.assetId, Number(row.fallbackCount ?? 0));
+  }
+  return result;
+}
+
+export function readAnnotationMaxModificationDates(
+  annotationDbPath: string,
+  libraryDbPath: string,
+): Map<string, number | null> {
+  const sql = `
+    ATTACH DATABASE '${quoteSqlPath(libraryDbPath)}' AS lib;
+    SELECT
+      a.ZANNOTATIONASSETID AS assetId,
+      MAX(a.ZANNOTATIONMODIFICATIONDATE) AS maxModificationDate
+    FROM ZAEANNOTATION a
+    INNER JOIN lib.ZBKLIBRARYASSET b ON b.ZASSETID = a.ZANNOTATIONASSETID
+    WHERE (a.ZANNOTATIONDELETED IS NULL OR a.ZANNOTATIONDELETED = 0)
+      AND b.ZCONTENTTYPE IN (1, 3)
+    GROUP BY a.ZANNOTATIONASSETID;
+  `;
+
+  const rows = querySqlite<RawAssetAnnotationModificationRow>(annotationDbPath, sql);
+  const result = new Map<string, number | null>();
+  for (const row of rows) {
+    const value = row.maxModificationDate;
+    if (value === null || Number.isNaN(Number(value))) {
+      result.set(row.assetId, null);
+      continue;
+    }
+    result.set(row.assetId, Number(value));
   }
   return result;
 }
