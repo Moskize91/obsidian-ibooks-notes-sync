@@ -11,12 +11,14 @@ import { buildBookFileRelativePathByAssetId, toShortBookFileStem } from "./book-
 import { readEpubChapterOrderByKey, readEpubChapterTitleByKey, sortEpubAnnotations } from "./epub";
 import { log } from "./logger";
 import {
+  extractPdfTextNoteContent,
   extractPdfPageAnnotations,
+  limitPngMaxDimension,
   overlayPdfAnnotationNumbers,
-  pdfAnnotationLabel,
   renderPdfPageToPng,
   shouldOverlayPdfAnnotationRect,
   sortPdfAnnotations,
+  toPdfNoteMarker,
 } from "./pdf";
 import {
   renderEpubBookMarkdown,
@@ -29,7 +31,6 @@ import type {
   CliConfig,
   EpubAnnotation,
   IBooksPaths,
-  PdfAnnotation,
   SyncAssetState,
   SyncStats,
   SyncableBookFormat,
@@ -48,7 +49,7 @@ type SyncResult = {
 type PdfPageRenderItem = {
   pageNumber: number;
   imageRelativePath: string | null;
-  notes: Array<{ number: number; label: string; subtype: string; hasRect: boolean }>;
+  notes: Array<{ marker: string | null; text: string; hasRect: boolean }>;
 };
 
 type PdfFileStamp = {
@@ -70,7 +71,8 @@ type BookFingerprint = {
 };
 
 const LEGACY_PDF_FALLBACK_MARKER = "当前版本无法展开内容";
-const OUTPUT_SCHEMA_VERSION = 20;
+const OUTPUT_SCHEMA_VERSION = 26;
+const PDF_IMAGE_MAX_DIMENSION = 1600;
 
 async function pathExists(inputPath: string): Promise<boolean> {
   try {
@@ -105,12 +107,6 @@ function filterBooks(books: Array<Book & { format: SyncableBookFormat }>, filter
       book.title.toLowerCase().includes(keyword) ||
       (book.author?.toLowerCase().includes(keyword) ?? false)
     );
-  });
-}
-
-function numberPdfAnnotations(annotations: PdfAnnotation[]): Array<{ number: number; annotation: PdfAnnotation }> {
-  return sortPdfAnnotations(annotations).map((annotation, index) => {
-    return { number: index + 1, annotation };
   });
 }
 
@@ -237,7 +233,26 @@ async function generatePdfPages(
   const items: PdfPageRenderItem[] = [];
 
   for (const page of pages) {
-    const numbered = numberPdfAnnotations(page.annotations);
+    const renderableAnnotations = sortPdfAnnotations(page.annotations)
+      .map((annotation) => {
+        return {
+          annotation,
+          text: extractPdfTextNoteContent(annotation),
+        };
+      })
+      .filter((item) => item.text.length > 0);
+    if (renderableAnnotations.length === 0) {
+      continue;
+    }
+
+    const hasMultipleNotes = renderableAnnotations.length > 1;
+    const numbered = renderableAnnotations.map((item, index) => {
+      return {
+        ...item,
+        marker: hasMultipleNotes ? toPdfNoteMarker(index + 1) : null,
+      };
+    });
+
     const imageName = `page-${page.pageNumber}.png`;
     const imageRelativePath = path.posix.join("assets", "pdf", book.assetId, imageName);
     const imageAbsolutePath = path.join(bookAssetDir, imageName);
@@ -245,14 +260,19 @@ async function generatePdfPages(
     if (!dryRun) {
       await fs.mkdir(bookAssetDir, { recursive: true });
       renderPdfPageToPng(book.path, page.pageNumber, imageAbsolutePath);
+      await limitPngMaxDimension(imageAbsolutePath, PDF_IMAGE_MAX_DIMENSION);
 
       const overlayRects = numbered
-        .filter((item) => shouldOverlayPdfAnnotationRect(item.annotation))
+        .filter((item) => item.annotation.rect)
         .map((item) => {
           return {
-            number: item.number,
+            marker: hasMultipleNotes ? item.marker : null,
             rect: item.annotation.rect!,
+            drawRect: shouldOverlayPdfAnnotationRect(item.annotation),
           };
+        })
+        .filter((item) => {
+          return item.drawRect || Boolean(item.marker);
         });
 
       await overlayPdfAnnotationNumbers(imageAbsolutePath, page.pageWidth, page.pageHeight, overlayRects);
@@ -260,9 +280,8 @@ async function generatePdfPages(
 
     const notes = numbered.map((item) => {
       return {
-        number: item.number,
-        label: pdfAnnotationLabel(item.annotation),
-        subtype: item.annotation.subtype,
+        marker: item.marker,
+        text: item.text,
         hasRect: Boolean(item.annotation.rect),
       };
     });

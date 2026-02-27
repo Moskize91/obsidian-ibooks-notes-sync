@@ -169,7 +169,7 @@ test("renderEpubBookMarkdown keeps single separator between entries", () => {
   assert.match(output, /Second/);
 });
 
-test("renderPdfBookMarkdown omits page headers and uses image embedding with page separators", () => {
+test("renderPdfBookMarkdown renders single text note directly", () => {
   const pdfBook: Book = {
     ...demoBook,
     format: "PDF",
@@ -180,9 +180,8 @@ test("renderPdfBookMarkdown omits page headers and uses image embedding with pag
       imageRelativePath: "assets/pdf/asset-id/page-8.png",
       notes: [
         {
-          number: 1,
-          label: "高亮标注（无附注）",
-          subtype: "Highlight",
+          marker: null,
+          text: "单条笔记内容",
           hasRect: true,
         },
       ],
@@ -193,13 +192,45 @@ test("renderPdfBookMarkdown omits page headers and uses image embedding with pag
   assert.doesNotMatch(output, /### 第 8 页/);
   assert.match(output, /---/);
   assert.match(output, /> !\[第8页\]\(\.\.\/assets\/pdf\/asset-id\/page-8\.png\) 第 8 页/);
-  assert.match(output, /1\. \[Highlight\] 高亮标注（无附注）/);
+  assert.match(output, /\n单条笔记内容\n/);
+  assert.doesNotMatch(output, /\*\*标注/);
   const imageIndex = output.indexOf("> ![第8页]");
-  const noteIndex = output.indexOf("1. [Highlight] 高亮标注（无附注）");
+  const noteIndex = output.indexOf("单条笔记内容");
   assert.notEqual(imageIndex, -1);
   assert.notEqual(noteIndex, -1);
   assert.ok(imageIndex < noteIndex);
   assert.doesNotMatch(output, /\n!\[第8页\]/);
+});
+
+test("renderPdfBookMarkdown renders multiple notes with markers and separators", () => {
+  const pdfBook: Book = {
+    ...demoBook,
+    format: "PDF",
+  };
+  const output = renderPdfBookMarkdown(pdfBook, [
+    {
+      pageNumber: 12,
+      imageRelativePath: "assets/pdf/asset-id/page-12.png",
+      notes: [
+        {
+          marker: "①",
+          text: "第一条",
+          hasRect: true,
+        },
+        {
+          marker: "②",
+          text: "第二条",
+          hasRect: false,
+        },
+      ],
+    },
+  ]);
+
+  assert.match(output, /\*\*标注 ①\*\*/);
+  assert.match(output, /\*\*标注 ②\*\*（无定位）/);
+  assert.match(output, /\n---\n\n\*\*标注 ②\*\*/);
+  assert.match(output, /第一条/);
+  assert.match(output, /第二条/);
 });
 
 test("renderEpubBookMarkdown uses chapter spine order instead of title sort", () => {

@@ -38,6 +38,10 @@ for annotation in annotations {
     // Hide other built-in appearances (especially Popup) to avoid noisy large boxes.
     annotation.shouldDisplay =
         subtype == "text" ||
+        subtype == "highlight" ||
+        subtype == "underline" ||
+        subtype == "squiggly" ||
+        subtype == "strikeout" ||
         subtype == "sound" ||
         subtype == "fileattachment" ||
         subtype == "stamp" ||

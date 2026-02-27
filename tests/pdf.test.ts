@@ -1,30 +1,46 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { pdfAnnotationLabel, shouldOverlayPdfAnnotationRect, sortPdfAnnotations } from "../src/lib/pdf";
+import {
+  extractPdfTextNoteContent,
+  normalizePdfNoteText,
+  shouldOverlayPdfAnnotationRect,
+  sortPdfAnnotations,
+  toPdfNoteMarker,
+} from "../src/lib/pdf";
 import type { PdfAnnotation } from "../src/lib/types";
 
-test("pdfAnnotationLabel prefers explicit contents", () => {
+test("normalizePdfNoteText trims blank edges and keeps indentation", () => {
+  const output = normalizePdfNoteText("\n\n  first\n    second\nthird   \n\n");
+  assert.equal(output, "  first\n    second\nthird");
+});
+
+test("extractPdfTextNoteContent keeps text annotations and drops sound annotations", () => {
   const annotation: PdfAnnotation = {
     id: "a",
     pageNumber: 1,
     subtype: "Text",
-    contents: "My page note",
+    contents: "My page note\n",
+    rect: null,
+  };
+  const soundAnnotation: PdfAnnotation = {
+    id: "b",
+    pageNumber: 1,
+    subtype: "Sound",
+    contents: "should be ignored",
     rect: null,
   };
 
-  assert.equal(pdfAnnotationLabel(annotation), "My page note");
+  assert.equal(extractPdfTextNoteContent(annotation), "My page note");
+  assert.equal(extractPdfTextNoteContent(soundAnnotation), "");
 });
 
-test("pdfAnnotationLabel falls back for highlight", () => {
-  const annotation: PdfAnnotation = {
-    id: "a",
-    pageNumber: 1,
-    subtype: "Highlight",
-    contents: null,
-    rect: null,
-  };
-
-  assert.equal(pdfAnnotationLabel(annotation), "高亮标注（无附注）");
+test("toPdfNoteMarker uses circled markers and falls back after 50", () => {
+  assert.equal(toPdfNoteMarker(1), "①");
+  assert.equal(toPdfNoteMarker(20), "⑳");
+  assert.equal(toPdfNoteMarker(21), "㉑");
+  assert.equal(toPdfNoteMarker(36), "㊱");
+  assert.equal(toPdfNoteMarker(50), "㊿");
+  assert.equal(toPdfNoteMarker(51), "[51]");
 });
 
 test("sortPdfAnnotations places positioned annotations first", () => {
@@ -56,7 +72,7 @@ test("shouldOverlayPdfAnnotationRect only allows area annotations", () => {
       subtype: "Highlight",
       rect: { x1: 10, y1: 10, x2: 20, y2: 20 },
     }),
-    true,
+    false,
   );
   assert.equal(
     shouldOverlayPdfAnnotationRect({
@@ -64,6 +80,13 @@ test("shouldOverlayPdfAnnotationRect only allows area annotations", () => {
       rect: { x1: 10, y1: 10, x2: 20, y2: 20 },
     }),
     false,
+  );
+  assert.equal(
+    shouldOverlayPdfAnnotationRect({
+      subtype: "Square",
+      rect: { x1: 10, y1: 10, x2: 20, y2: 20 },
+    }),
+    true,
   );
   assert.equal(
     shouldOverlayPdfAnnotationRect({

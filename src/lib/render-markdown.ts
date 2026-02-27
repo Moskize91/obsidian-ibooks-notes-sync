@@ -2,9 +2,8 @@ import path from "node:path";
 import type { Book, EpubAnnotation } from "./types";
 
 type PdfRenderedNote = {
-  number: number;
-  label: string;
-  subtype: string;
+  marker: string | null;
+  text: string;
   hasRect: boolean;
 };
 
@@ -299,14 +298,29 @@ export function renderPdfBookMarkdown(book: Book, pages: PdfRenderedPage[]): str
 
     if (page.notes.length === 0) {
       lines.push("- 无可展示笔记");
+    } else if (page.notes.length === 1) {
+      const note = page.notes[0];
+      if (note) {
+        lines.push(note.text.replace(/\n+$/g, ""));
+      }
     } else {
-      for (const note of page.notes) {
-        const positionTag = note.hasRect ? "" : "（无定位）";
-        lines.push(`${note.number}. [${note.subtype}]${positionTag} ${note.label}`);
+      for (const [index, note] of page.notes.entries()) {
+        const markerLabel = note.marker ?? String(index + 1);
+        const locationTag = note.hasRect ? "" : "（无定位）";
+        lines.push(`**标注 ${markerLabel}**${locationTag}`);
+        lines.push("");
+        lines.push(note.text.replace(/\n+$/g, ""));
+        lines.push("");
+        if (index < page.notes.length - 1) {
+          lines.push("---");
+          lines.push("");
+        }
       }
     }
 
-    lines.push("");
+    if (lines[lines.length - 1] !== "") {
+      lines.push("");
+    }
   }
 
   return lines.join("\n");
