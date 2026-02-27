@@ -89,6 +89,57 @@ function toDisplayChapterKey(rawChapterKey: string, chapterTitleByKey?: Map<stri
   return chapterKey;
 }
 
+function collapseWhitespace(input: string): string {
+  return input.replace(/\s+/g, " ").trim();
+}
+
+function trimBlankEdges(input: string): string {
+  const lines = input.replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
+  let start = 0;
+  while (start < lines.length) {
+    const line = lines[start];
+    if (line === undefined || line.trim() !== "") {
+      break;
+    }
+    start += 1;
+  }
+
+  let end = lines.length;
+  while (end > start) {
+    const line = lines[end - 1];
+    if (line === undefined || line.trim() !== "") {
+      break;
+    }
+    end -= 1;
+  }
+
+  if (start >= end) {
+    return "";
+  }
+  return lines.slice(start, end).join("\n");
+}
+
+function normalizeNoteText(noteText: string): string {
+  const trimmed = trimBlankEdges(noteText);
+  if (!trimmed) {
+    return "";
+  }
+  const kept = trimmed.split("\n");
+  const lastLine = kept[kept.length - 1];
+  if (lastLine === undefined) {
+    return "";
+  }
+  kept[kept.length - 1] = lastLine.replace(/\s+$/g, "");
+  return kept.join("\n");
+}
+
+function buildEpubLocationLink(book: Book, location: string | null): string {
+  if (!location) {
+    return `ibooks://assetid/${book.assetId}`;
+  }
+  return `ibooks://assetid/${book.assetId}#${location}`;
+}
+
 export function getBookFileRelativePath(book: Book, booksDirName: string): string {
   const fileName = `${book.title.replace(/[<>:"/\\|?*]/g, "_")}-${book.assetId.slice(0, 8)}.md`;
   return path.posix.join(booksDirName, fileName);
@@ -129,19 +180,27 @@ export function renderEpubBookMarkdown(
     lines.push("");
     const chapterAnnotations = chapterMap.get(chapterKey) ?? [];
     for (const [index, annotation] of chapterAnnotations.entries()) {
-      lines.push(`### 标注 ${index + 1}`);
+      if (index === 0) {
+        lines.push("---");
+      }
+      const quoteText = collapseWhitespace(annotation.selectedText ?? "");
+      const timestamp = fmtDate(annotation.createdAt);
+      const timestampLabel = `[${timestamp}](<${buildEpubLocationLink(book, annotation.location)}>)`;
+
+      if (quoteText) {
+        lines.push(`> ${timestampLabel} ${quoteText}`);
+      } else {
+        lines.push(`> ${timestampLabel}`);
+      }
       lines.push("");
-      if (annotation.selectedText) {
-        lines.push(`> ${annotation.selectedText}`);
+
+      const normalizedNoteText = normalizeNoteText(annotation.noteText ?? "");
+      if (normalizedNoteText) {
+        lines.push(normalizedNoteText);
         lines.push("");
       }
-      if (annotation.noteText) {
-        lines.push(`- 笔记: ${annotation.noteText}`);
-      }
-      if (annotation.location) {
-        lines.push(`- 定位: \`${annotation.location}\``);
-      }
-      lines.push(`- 时间: ${fmtDate(annotation.createdAt)}`);
+
+      lines.push("---");
       lines.push("");
     }
   }

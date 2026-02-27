@@ -69,7 +69,7 @@ type BookFingerprint = {
 };
 
 const LEGACY_PDF_FALLBACK_MARKER = "当前版本无法展开内容";
-const OUTPUT_SCHEMA_VERSION = 5;
+const OUTPUT_SCHEMA_VERSION = 12;
 
 async function pathExists(inputPath: string): Promise<boolean> {
   try {
