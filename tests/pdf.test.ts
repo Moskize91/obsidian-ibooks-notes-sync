@@ -1,7 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  extractPdfTextNoteContent,
+  extractPdfQuoteContent,
+  extractPdfUserNoteContent,
   normalizePdfNoteText,
   shouldOverlayPdfAnnotationRect,
   sortPdfAnnotations,
@@ -14,12 +15,13 @@ test("normalizePdfNoteText trims blank edges and keeps indentation", () => {
   assert.equal(output, "  first\n    second\nthird");
 });
 
-test("extractPdfTextNoteContent keeps text annotations and drops sound annotations", () => {
+test("extractPdfUserNoteContent keeps text annotations and drops sound annotations", () => {
   const annotation: PdfAnnotation = {
     id: "a",
     pageNumber: 1,
     subtype: "Text",
     contents: "My page note\n",
+    selectedText: null,
     rect: null,
   };
   const soundAnnotation: PdfAnnotation = {
@@ -27,11 +29,24 @@ test("extractPdfTextNoteContent keeps text annotations and drops sound annotatio
     pageNumber: 1,
     subtype: "Sound",
     contents: "should be ignored",
+    selectedText: null,
     rect: null,
   };
 
-  assert.equal(extractPdfTextNoteContent(annotation), "My page note");
-  assert.equal(extractPdfTextNoteContent(soundAnnotation), "");
+  assert.equal(extractPdfUserNoteContent(annotation), "My page note");
+  assert.equal(extractPdfUserNoteContent(soundAnnotation), "");
+});
+
+test("extractPdfQuoteContent returns normalized selected text", () => {
+  const annotation: PdfAnnotation = {
+    id: "q",
+    pageNumber: 1,
+    subtype: "Highlight",
+    contents: null,
+    selectedText: " quote\ntext  ",
+    rect: null,
+  };
+  assert.equal(extractPdfQuoteContent(annotation), "quote text");
 });
 
 test("toPdfNoteMarker uses circled markers and falls back after 50", () => {
@@ -50,6 +65,7 @@ test("sortPdfAnnotations places positioned annotations first", () => {
       pageNumber: 1,
       subtype: "Text",
       contents: null,
+      selectedText: null,
       rect: null,
     },
     {
@@ -57,6 +73,7 @@ test("sortPdfAnnotations places positioned annotations first", () => {
       pageNumber: 1,
       subtype: "Highlight",
       contents: null,
+      selectedText: null,
       rect: { x1: 10, y1: 10, x2: 20, y2: 20 },
     },
   ];

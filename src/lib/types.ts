@@ -53,6 +53,7 @@ export type PdfAnnotation = {
   pageNumber: number;
   subtype: string;
   contents: string | null;
+  selectedText: string | null;
   rect: Rect | null;
 };
 

@@ -1,9 +1,11 @@
 import path from "node:path";
 import type { Book, EpubAnnotation } from "./types";
+import { normalizeQuoteText } from "./quote-normalize";
 
 type PdfRenderedNote = {
   marker: string | null;
-  text: string;
+  quoteText: string;
+  noteText: string;
   hasRect: boolean;
 };
 
@@ -87,10 +89,6 @@ function toDisplayChapterKey(rawChapterKey: string, chapterTitleByKey?: Map<stri
     return "未分章";
   }
   return chapterKey;
-}
-
-function collapseWhitespace(input: string): string {
-  return input.replace(/\s+/g, " ").trim();
 }
 
 function normalizeLocationForSort(location: string | null): string {
@@ -238,7 +236,7 @@ export function renderEpubBookMarkdown(
       if (index === 0) {
         lines.push("---");
       }
-      const quoteText = collapseWhitespace(annotation.selectedText ?? "");
+      const quoteText = normalizeQuoteText(annotation.selectedText ?? "");
       const timestamp = fmtDate(annotation.createdAt);
       const timestampLabel = `[${timestamp}](<${buildEpubLocationLink(book, annotation.location)}>)`;
 
@@ -301,16 +299,12 @@ export function renderPdfBookMarkdown(book: Book, pages: PdfRenderedPage[]): str
     } else if (page.notes.length === 1) {
       const note = page.notes[0];
       if (note) {
-        lines.push(note.text.replace(/\n+$/g, ""));
+        pushPdfNoteBlock(lines, note, null);
       }
     } else {
       for (const [index, note] of page.notes.entries()) {
         const markerLabel = note.marker ?? String(index + 1);
-        const locationTag = note.hasRect ? "" : "（无定位）";
-        lines.push(`**标注 ${markerLabel}**${locationTag}`);
-        lines.push("");
-        lines.push(note.text.replace(/\n+$/g, ""));
-        lines.push("");
+        pushPdfNoteBlock(lines, note, markerLabel);
         if (index < page.notes.length - 1) {
           lines.push("---");
           lines.push("");
@@ -324,6 +318,28 @@ export function renderPdfBookMarkdown(book: Book, pages: PdfRenderedPage[]): str
   }
 
   return lines.join("\n");
+}
+
+function pushPdfNoteBlock(lines: string[], note: PdfRenderedNote, markerLabel: string | null): void {
+  const quoteText = normalizeQuoteText(note.quoteText ?? "");
+  const normalizedNoteText = normalizeNoteText(note.noteText ?? "");
+  if (quoteText) {
+    if (markerLabel) {
+      lines.push(`> **标注 ${markerLabel}** ${quoteText}`);
+    } else {
+      lines.push(`> ${quoteText}`);
+    }
+    lines.push("");
+  } else if (markerLabel) {
+    const locationTag = note.hasRect ? "" : "（无定位）";
+    lines.push(`**标注 ${markerLabel}**${locationTag}`);
+    lines.push("");
+  }
+
+  if (normalizedNoteText) {
+    lines.push(normalizedNoteText.replace(/\n+$/g, ""));
+    lines.push("");
+  }
 }
 
 export type { PdfRenderedPage, PdfRenderedNote };

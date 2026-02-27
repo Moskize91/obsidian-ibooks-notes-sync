@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import path from "node:path";
 import sharp from "sharp";
 import type { PdfAnnotation, PdfPageAnnotations, Rect } from "./types";
+import { normalizeQuoteText } from "./quote-normalize";
 
 type PdfJsAnnotation = {
   id?: string;
@@ -114,7 +115,7 @@ export function normalizePdfNoteText(noteText: string): string {
   return kept.join("\n");
 }
 
-export function extractPdfTextNoteContent(annotation: Pick<PdfAnnotation, "subtype" | "contents">): string {
+export function extractPdfUserNoteContent(annotation: Pick<PdfAnnotation, "subtype" | "contents">): string {
   const subtype = annotation.subtype.toLowerCase();
   if (NON_TEXT_PDF_SUBTYPES.has(subtype)) {
     return "";
@@ -123,6 +124,13 @@ export function extractPdfTextNoteContent(annotation: Pick<PdfAnnotation, "subty
     return "";
   }
   return normalizePdfNoteText(annotation.contents);
+}
+
+export function extractPdfQuoteContent(annotation: Pick<PdfAnnotation, "selectedText">): string {
+  if (!annotation.selectedText) {
+    return "";
+  }
+  return normalizeQuoteText(annotation.selectedText);
 }
 
 export function toPdfNoteMarker(number: number): string {
@@ -210,7 +218,7 @@ function extractTextByQuadPoints(annotation: PdfJsAnnotation, textItems: PdfPage
   if (selectedTexts.length === 0) {
     return null;
   }
-  return normalizeText(selectedTexts.join(""));
+  return normalizeText(selectedTexts.join(" "));
 }
 
 async function readPdfPageTextItems(page: Awaited<ReturnType<PdfJsModule["getPage"]>>): Promise<PdfPageTextItem[]> {
@@ -274,9 +282,8 @@ export async function extractPdfPageAnnotations(pdfPath: string): Promise<PdfPag
           id: annotation.id ?? `${pageNumber}-${index}`,
           pageNumber,
           subtype: normalizeSubtype(annotation.subtype),
-          contents:
-            getAnnotationContents(annotation, annotationsById) ??
-            extractTextByQuadPoints(annotation, textItems),
+          contents: getAnnotationContents(annotation, annotationsById),
+          selectedText: extractTextByQuadPoints(annotation, textItems),
           rect: toRect(annotation.rect),
         };
       })
@@ -286,7 +293,7 @@ export async function extractPdfPageAnnotations(pdfPath: string): Promise<PdfPag
           return false;
         }
 
-        return Boolean(annotation.rect || annotation.contents);
+        return Boolean(annotation.rect || annotation.contents || annotation.selectedText);
       });
 
     if (annotations.length > 0) {

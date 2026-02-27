@@ -11,7 +11,8 @@ import { buildBookFileRelativePathByAssetId, toShortBookFileStem } from "./book-
 import { readEpubChapterOrderByKey, readEpubChapterTitleByKey, sortEpubAnnotations } from "./epub";
 import { log } from "./logger";
 import {
-  extractPdfTextNoteContent,
+  extractPdfQuoteContent,
+  extractPdfUserNoteContent,
   extractPdfPageAnnotations,
   limitPngMaxDimension,
   overlayPdfAnnotationNumbers,
@@ -49,7 +50,7 @@ type SyncResult = {
 type PdfPageRenderItem = {
   pageNumber: number;
   imageRelativePath: string | null;
-  notes: Array<{ marker: string | null; text: string; hasRect: boolean }>;
+  notes: Array<{ marker: string | null; quoteText: string; noteText: string; hasRect: boolean }>;
 };
 
 type PdfFileStamp = {
@@ -71,7 +72,7 @@ type BookFingerprint = {
 };
 
 const LEGACY_PDF_FALLBACK_MARKER = "当前版本无法展开内容";
-const OUTPUT_SCHEMA_VERSION = 26;
+const OUTPUT_SCHEMA_VERSION = 30;
 const PDF_IMAGE_MAX_DIMENSION = 1600;
 
 async function pathExists(inputPath: string): Promise<boolean> {
@@ -235,12 +236,22 @@ async function generatePdfPages(
   for (const page of pages) {
     const renderableAnnotations = sortPdfAnnotations(page.annotations)
       .map((annotation) => {
+        const quoteText = extractPdfQuoteContent(annotation);
+        let noteText = extractPdfUserNoteContent(annotation);
+        if (
+          quoteText.length > 0 &&
+          noteText.length > 0 &&
+          quoteText.replace(/\s+/g, " ").trim() === noteText.replace(/\s+/g, " ").trim()
+        ) {
+          noteText = "";
+        }
         return {
           annotation,
-          text: extractPdfTextNoteContent(annotation),
+          quoteText,
+          noteText,
         };
       })
-      .filter((item) => item.text.length > 0);
+      .filter((item) => item.quoteText.length > 0 || item.noteText.length > 0);
     if (renderableAnnotations.length === 0) {
       continue;
     }
@@ -281,7 +292,8 @@ async function generatePdfPages(
     const notes = numbered.map((item) => {
       return {
         marker: item.marker,
-        text: item.text,
+        quoteText: item.quoteText,
+        noteText: item.noteText,
         hasRect: Boolean(item.annotation.rect),
       };
     });

@@ -133,7 +133,7 @@ test("renderEpubBookMarkdown collapses multi-paragraph selected text into one qu
   const output = renderEpubBookMarkdown(demoBook, annotations);
   assert.match(
     output,
-    /> \[2026-02-01 00:00:00\]\(<ibooks:\/\/assetid\/ABCDEF0123456789#epubcfi\(.*\)>\) 钱宝琮得到结论： 余考《周髀》所详天体论。/,
+    /> \[2026-02-01 00:00:00\]\(<ibooks:\/\/assetid\/ABCDEF0123456789#epubcfi\(.*\)>\) 钱宝琮得到结论：余考《周髀》所详天体论。/,
   );
   assert.doesNotMatch(output, /钱宝琮得到结论：:/);
   assert.doesNotMatch(output, /\n余考《周髀》所详天体论。\n/);
@@ -181,7 +181,8 @@ test("renderPdfBookMarkdown renders single text note directly", () => {
       notes: [
         {
           marker: null,
-          text: "单条笔记内容",
+          quoteText: "  单条 原文 \n  内容 ",
+          noteText: " \n\n 单条笔记内容\n",
           hasRect: true,
         },
       ],
@@ -192,7 +193,8 @@ test("renderPdfBookMarkdown renders single text note directly", () => {
   assert.doesNotMatch(output, /### 第 8 页/);
   assert.match(output, /---/);
   assert.match(output, /> !\[第8页\]\(\.\.\/assets\/pdf\/asset-id\/page-8\.png\) 第 8 页/);
-  assert.match(output, /\n单条笔记内容\n/);
+  assert.match(output, /> 单条原文内容/);
+  assert.match(output, /\n ?单条笔记内容\n/);
   assert.doesNotMatch(output, /\*\*标注/);
   const imageIndex = output.indexOf("> ![第8页]");
   const noteIndex = output.indexOf("单条笔记内容");
@@ -214,23 +216,25 @@ test("renderPdfBookMarkdown renders multiple notes with markers and separators",
       notes: [
         {
           marker: "①",
-          text: "第一条",
+          quoteText: "第一条原文",
+          noteText: "第一条笔记",
           hasRect: true,
         },
         {
           marker: "②",
-          text: "第二条",
+          quoteText: "第二条原文",
+          noteText: "第二条笔记",
           hasRect: false,
         },
       ],
     },
   ]);
 
-  assert.match(output, /\*\*标注 ①\*\*/);
-  assert.match(output, /\*\*标注 ②\*\*（无定位）/);
-  assert.match(output, /\n---\n\n\*\*标注 ②\*\*/);
-  assert.match(output, /第一条/);
-  assert.match(output, /第二条/);
+  assert.match(output, /> \*\*标注 ①\*\* 第一条原文/);
+  assert.match(output, /第一条笔记/);
+  assert.match(output, /> \*\*标注 ②\*\* 第二条原文/);
+  assert.match(output, /第二条笔记/);
+  assert.match(output, /\n---\n\n> \*\*标注 ②\*\*/);
 });
 
 test("renderEpubBookMarkdown uses chapter spine order instead of title sort", () => {
