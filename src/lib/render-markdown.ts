@@ -18,7 +18,12 @@ function fmtDate(date: Date): string {
   return date.toISOString().replace("T", " ").slice(0, 19);
 }
 
-export function renderIndexMarkdown(books: Book[], generatedAt: Date, booksDirName: string): string {
+export function renderIndexMarkdown(
+  books: Book[],
+  generatedAt: Date,
+  booksDirName: string,
+  bookFileRelativePathByAssetId?: Map<string, string | null>,
+): string {
   const lines: string[] = [];
   lines.push("# iBooks Notes Sync Index");
   lines.push("");
@@ -29,7 +34,11 @@ export function renderIndexMarkdown(books: Book[], generatedAt: Date, booksDirNa
   lines.push("| --- | --- | --- | ---: | --- | --- |");
 
   for (const book of books) {
-    const fileName = getBookFileRelativePath(book, booksDirName);
+    const mapped = bookFileRelativePathByAssetId?.get(book.assetId);
+    const fileName = mapped ?? getBookFileRelativePath(book, booksDirName);
+    if (!fileName) {
+      continue;
+    }
     const fileCell = `[打开](${fileName})`;
     lines.push(
       `| ${escapeCell(book.title)} | ${escapeCell(book.author ?? "-")} | ${book.format} | ${book.annotationCount} | ${fmtDate(generatedAt)} | ${fileCell} |`,

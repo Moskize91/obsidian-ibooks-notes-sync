@@ -39,7 +39,7 @@ function normalizeStateAsset(assetId: string, value: unknown): SyncAssetState | 
   if (
     typeof candidate.hash !== "string" ||
     typeof candidate.title !== "string" ||
-    typeof candidate.bookFileRelativePath !== "string"
+    (typeof candidate.bookFileRelativePath !== "string" && candidate.bookFileRelativePath !== null)
   ) {
     return null;
   }
@@ -52,7 +52,7 @@ function normalizeStateAsset(assetId: string, value: unknown): SyncAssetState | 
     title: candidate.title,
     format,
     hash: candidate.hash,
-    bookFileRelativePath: candidate.bookFileRelativePath,
+    bookFileRelativePath: candidate.bookFileRelativePath ?? null,
     pdfAssetDirRelativePath,
   };
 }

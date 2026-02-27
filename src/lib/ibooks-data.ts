@@ -32,6 +32,11 @@ type RawAssetAnnotationModificationRow = {
   maxModificationDate: number | null;
 };
 
+type RawAssetCountRow = {
+  assetId: string;
+  count: number | null;
+};
+
 const APPLE_EPOCH_SECONDS = 978307200;
 
 function toFormat(contentType: number): BookFormat {
@@ -192,6 +197,41 @@ export function readPdfFallbackCounts(annotationDbPath: string, libraryDbPath: s
   const result = new Map<string, number>();
   for (const row of rows) {
     result.set(row.assetId, Number(row.fallbackCount ?? 0));
+  }
+  return result;
+}
+
+export function readEpubRenderableCounts(annotationDbPath: string, libraryDbPath: string): Map<string, number> {
+  const sql = `
+    ATTACH DATABASE '${quoteSqlPath(libraryDbPath)}' AS lib;
+    SELECT
+      a.ZANNOTATIONASSETID AS assetId,
+      COUNT(*) AS count
+    FROM ZAEANNOTATION a
+    INNER JOIN lib.ZBKLIBRARYASSET b ON b.ZASSETID = a.ZANNOTATIONASSETID
+    WHERE (a.ZANNOTATIONDELETED IS NULL OR a.ZANNOTATIONDELETED = 0)
+      AND b.ZCONTENTTYPE = 1
+      AND (
+        (
+          a.ZANNOTATIONTYPE = 2
+          AND TRIM(COALESCE(a.ZANNOTATIONSELECTEDTEXT, '')) <> ''
+        )
+        OR
+        (
+          (a.ZANNOTATIONTYPE IS NULL OR a.ZANNOTATIONTYPE <> 2)
+          AND (
+            TRIM(COALESCE(a.ZANNOTATIONSELECTEDTEXT, '')) <> ''
+            OR TRIM(COALESCE(a.ZANNOTATIONNOTE, '')) <> ''
+          )
+        )
+      )
+    GROUP BY a.ZANNOTATIONASSETID;
+  `;
+
+  const rows = querySqlite<RawAssetCountRow>(annotationDbPath, sql);
+  const result = new Map<string, number>();
+  for (const row of rows) {
+    result.set(row.assetId, Number(row.count ?? 0));
   }
   return result;
 }
