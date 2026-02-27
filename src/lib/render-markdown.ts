@@ -113,7 +113,7 @@ export function renderEpubBookMarkdown(book: Book, annotations: EpubAnnotation[]
   return lines.join("\n");
 }
 
-export function renderPdfBookMarkdown(book: Book, pages: PdfRenderedPage[], fallbackCount: number): string {
+export function renderPdfBookMarkdown(book: Book, pages: PdfRenderedPage[]): string {
   const lines: string[] = [];
   lines.push(`# ${book.title}`);
   lines.push("");
@@ -129,11 +129,7 @@ export function renderPdfBookMarkdown(book: Book, pages: PdfRenderedPage[], fall
   lines.push("");
 
   if (pages.length === 0) {
-    if (fallbackCount > 0) {
-      lines.push(`> 已检测到 ${fallbackCount} 条 PDF 标注记录，但当前版本无法展开内容。`);
-    } else {
-      lines.push("> 本书暂无可同步的 PDF 标注。");
-    }
+    lines.push("> 本书暂无可同步的 PDF 标注。");
     lines.push("");
     return lines.join("\n");
   }

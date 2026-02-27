@@ -62,6 +62,14 @@ type BookSyncSnapshot = {
   pdfAssetDirRelativePath: string | null;
 };
 
+type BookFingerprint = {
+  book: Book & { format: SyncableBookFormat };
+  hash: string;
+  shouldHaveOutput: boolean;
+};
+
+const LEGACY_PDF_FALLBACK_MARKER = "当前版本无法展开内容";
+
 async function pathExists(inputPath: string): Promise<boolean> {
   try {
     await fs.access(inputPath);
@@ -156,6 +164,27 @@ function shouldRegenerateBook(snapshot: BookSyncSnapshot, previous: SyncAssetSta
   }
 
   return false;
+}
+
+async function hasLegacyPdfFallbackMarker(outputDir: string, previous: SyncAssetState | undefined): Promise<boolean> {
+  if (!previous?.bookFileRelativePath) {
+    return false;
+  }
+
+  const absolutePath = path.join(outputDir, previous.bookFileRelativePath);
+  try {
+    const content = await fs.readFile(absolutePath, "utf8");
+    return content.includes(LEGACY_PDF_FALLBACK_MARKER);
+  } catch {
+    return false;
+  }
+}
+
+async function hasMissingExpectedBookFile(outputDir: string, previous: SyncAssetState | undefined): Promise<boolean> {
+  if (!previous?.bookFileRelativePath) {
+    return false;
+  }
+  return !(await pathExists(path.join(outputDir, previous.bookFileRelativePath)));
 }
 
 async function writeFileAtomically(filePath: string, content: string): Promise<void> {
@@ -262,20 +291,30 @@ function buildAnnotationsByAssetId(
   return byAssetId;
 }
 
-async function buildBookSyncSnapshot(
+async function buildBookFingerprint(
   book: Book & { format: SyncableBookFormat },
   annotationMaxModificationDates: Map<string, number | null>,
-  bookFileRelativePathByAssetId: Map<string, string | null>,
-): Promise<BookSyncSnapshot> {
+  epubRenderableCounts: Map<string, number>,
+  pdfFallbackCounts: Map<string, number>,
+  previousStateAssets: Record<string, SyncAssetState>,
+): Promise<BookFingerprint> {
   const pdfFileStamp = book.format === "PDF" ? await getPdfFileStamp(book.path) : null;
   const hash = buildBookSyncHash(book.format, annotationMaxModificationDates.get(book.assetId) ?? null, pdfFileStamp);
-  const bookFileRelativePath = bookFileRelativePathByAssetId.get(book.assetId) ?? null;
+  const shouldHaveOutput =
+    book.format === "EPUB"
+      ? (epubRenderableCounts.get(book.assetId) ?? 0) > 0
+      : (() => {
+          const previous = previousStateAssets[book.assetId];
+          if (previous && previous.hash === hash) {
+            return previous.bookFileRelativePath !== null;
+          }
+          return (pdfFallbackCounts.get(book.assetId) ?? 0) > 0;
+        })();
+
   return {
     book,
     hash,
-    bookFileRelativePath,
-    pdfAssetDirRelativePath:
-      bookFileRelativePath && book.format === "PDF" ? path.posix.join("assets", "pdf", book.assetId) : null,
+    shouldHaveOutput,
   };
 }
 
@@ -306,13 +345,22 @@ export async function runSync(config: CliConfig, paths: IBooksPaths, options: Sy
   );
   const epubRenderableCounts = readEpubRenderableCounts(paths.annotationDbPath, paths.libraryDbPath);
   const pdfFallbackCounts = readPdfFallbackCounts(paths.annotationDbPath, paths.libraryDbPath);
+  const allBookFingerprints = await Promise.all(
+    allBooks.map((book) => {
+      return buildBookFingerprint(
+        book,
+        annotationMaxModificationDates,
+        epubRenderableCounts,
+        pdfFallbackCounts,
+        previousState.assets,
+      );
+    }),
+  );
+  const fingerprintByAssetId = new Map<string, BookFingerprint>();
   const hasOutputByAssetId = new Map<string, boolean>();
-  for (const book of allBooks) {
-    if (book.format === "EPUB") {
-      hasOutputByAssetId.set(book.assetId, (epubRenderableCounts.get(book.assetId) ?? 0) > 0);
-      continue;
-    }
-    hasOutputByAssetId.set(book.assetId, (pdfFallbackCounts.get(book.assetId) ?? 0) > 0);
+  for (const fingerprint of allBookFingerprints) {
+    fingerprintByAssetId.set(fingerprint.book.assetId, fingerprint);
+    hasOutputByAssetId.set(fingerprint.book.assetId, fingerprint.shouldHaveOutput);
   }
   const bookFileRelativePathByAssetId = buildBookFileRelativePathByAssetId(
     allBooks,
@@ -320,11 +368,20 @@ export async function runSync(config: CliConfig, paths: IBooksPaths, options: Sy
     booksDirName,
   );
 
-  const bookSnapshots = await Promise.all(
-    books.map(async (book) => {
-      return buildBookSyncSnapshot(book, annotationMaxModificationDates, bookFileRelativePathByAssetId);
-    }),
-  );
+  const bookSnapshots: BookSyncSnapshot[] = books.map((book) => {
+    const fingerprint = fingerprintByAssetId.get(book.assetId);
+    const hash = fingerprint?.hash ?? buildBookSyncHash(book.format, annotationMaxModificationDates.get(book.assetId) ?? null, null);
+    const bookFileRelativePath = bookFileRelativePathByAssetId.get(book.assetId) ?? null;
+    return {
+      book,
+      hash,
+      bookFileRelativePath,
+      pdfAssetDirRelativePath:
+        book.format === "PDF" && bookFileRelativePath
+          ? path.posix.join("assets", "pdf", book.assetId)
+          : null,
+    };
+  });
 
   for (const snapshot of bookSnapshots) {
     const existing = nextStateAssets[snapshot.book.assetId];
@@ -346,9 +403,20 @@ export async function runSync(config: CliConfig, paths: IBooksPaths, options: Sy
     const previous = previousState.assets[snapshot.book.assetId];
     if (shouldRegenerateBook(snapshot, previous)) {
       changedSnapshots.push(snapshot);
-    } else {
-      stats.skippedBooks += 1;
+      continue;
     }
+
+    if (snapshot.book.format === "PDF" && (await hasLegacyPdfFallbackMarker(outputDir, previous))) {
+      changedSnapshots.push(snapshot);
+      continue;
+    }
+
+    if (await hasMissingExpectedBookFile(outputDir, previous)) {
+      changedSnapshots.push(snapshot);
+      continue;
+    }
+
+    stats.skippedBooks += 1;
   }
 
   const allCurrentAssetIds = new Set(allBooks.map((book) => book.assetId));
@@ -422,18 +490,17 @@ export async function runSync(config: CliConfig, paths: IBooksPaths, options: Sy
             nextBookFileRelativePath = snapshot.bookFileRelativePath;
           }
         } else {
-          const fallbackCount = pdfFallbackCounts.get(snapshot.book.assetId) ?? 0;
           let pages: PdfPageRenderItem[] = [];
           if (config.pdfBetaEnabled && snapshot.book.path) {
             stagedPdfAssetDir = path.join(stagingRoot, "assets", "pdf", snapshot.book.assetId);
             pages = await generatePdfPages(snapshot.book, stagedPdfAssetDir, options.dryRun);
             generatedPdfImageCount = pages.filter((page) => page.imageRelativePath).length;
           }
-          if (pages.length === 0 && fallbackCount === 0) {
+          if (pages.length === 0) {
             nextBookFileRelativePath = null;
             nextPdfAssetDirRelativePath = null;
           } else {
-            markdown = renderPdfBookMarkdown(snapshot.book, pages, fallbackCount);
+            markdown = renderPdfBookMarkdown(snapshot.book, pages);
             nextBookFileRelativePath = snapshot.bookFileRelativePath;
             nextPdfAssetDirRelativePath =
               generatedPdfImageCount > 0 ? path.posix.join("assets", "pdf", snapshot.book.assetId) : null;
