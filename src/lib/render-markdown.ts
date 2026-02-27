@@ -14,6 +14,8 @@ type PdfRenderedPage = {
   notes: PdfRenderedNote[];
 };
 
+type FrontmatterValue = string | number | boolean;
+
 function fmtDate(date: Date): string {
   return date.toISOString().replace("T", " ").slice(0, 19);
 }
@@ -53,25 +55,59 @@ function escapeCell(input: string): string {
   return input.replace(/\|/g, "\\|");
 }
 
+function toYamlScalar(value: FrontmatterValue): string {
+  if (typeof value === "string") {
+    return JSON.stringify(value);
+  }
+  return String(value);
+}
+
+function pushFrontmatter(lines: string[], properties: Array<[string, FrontmatterValue | null]>): void {
+  lines.push("---");
+  for (const [key, value] of properties) {
+    if (value === null) {
+      continue;
+    }
+    lines.push(`${key}: ${toYamlScalar(value)}`);
+  }
+  lines.push("---");
+  lines.push("");
+}
+
+function toDisplayChapterKey(rawChapterKey: string, chapterTitleByKey?: Map<string, string>): string {
+  const chapterKey = rawChapterKey.trim();
+  if (chapterKey.length === 0) {
+    return "未分章";
+  }
+  const mappedChapterTitle = chapterTitleByKey?.get(chapterKey)?.trim();
+  if (mappedChapterTitle) {
+    return mappedChapterTitle;
+  }
+  if (/^id[_-]?\d+$/i.test(chapterKey)) {
+    return "未分章";
+  }
+  return chapterKey;
+}
+
 export function getBookFileRelativePath(book: Book, booksDirName: string): string {
   const fileName = `${book.title.replace(/[<>:"/\\|?*]/g, "_")}-${book.assetId.slice(0, 8)}.md`;
   return path.posix.join(booksDirName, fileName);
 }
 
-export function renderEpubBookMarkdown(book: Book, annotations: EpubAnnotation[]): string {
+export function renderEpubBookMarkdown(
+  book: Book,
+  annotations: EpubAnnotation[],
+  chapterTitleByKey?: Map<string, string>,
+): string {
   const lines: string[] = [];
-  lines.push(`# ${book.title}`);
-  lines.push("");
-  lines.push(`- 作者: ${book.author ?? "-"}`);
-  if (book.publisher) {
-    lines.push(`- 出版商: ${book.publisher}`);
-  }
-  lines.push("- 格式: EPUB");
-  lines.push(`- 标注数: ${annotations.length}`);
-  if (book.path) {
-    lines.push(`- 源文件: \`${book.path}\``);
-  }
-  lines.push("");
+  pushFrontmatter(lines, [
+    ["title", book.title],
+    ["author", book.author ?? "-"],
+    ["publisher", book.publisher],
+    ["format", "EPUB"],
+    ["annotation_count", annotations.length],
+    ["source_file", book.path],
+  ]);
 
   if (annotations.length === 0) {
     lines.push("> 本书暂无可同步的 EPUB 标注。");
@@ -81,7 +117,7 @@ export function renderEpubBookMarkdown(book: Book, annotations: EpubAnnotation[]
 
   const chapterMap = new Map<string, EpubAnnotation[]>();
   for (const annotation of annotations) {
-    const key = annotation.chapterKey;
+    const key = toDisplayChapterKey(annotation.chapterKey, chapterTitleByKey);
     const list = chapterMap.get(key) ?? [];
     list.push(annotation);
     chapterMap.set(key, list);
@@ -89,7 +125,7 @@ export function renderEpubBookMarkdown(book: Book, annotations: EpubAnnotation[]
 
   const chapterKeys = Array.from(chapterMap.keys()).sort((a, b) => a.localeCompare(b));
   for (const chapterKey of chapterKeys) {
-    lines.push(`## 章节：${chapterKey}`);
+    lines.push(`## ${chapterKey}`);
     lines.push("");
     const chapterAnnotations = chapterMap.get(chapterKey) ?? [];
     for (const [index, annotation] of chapterAnnotations.entries()) {
@@ -115,18 +151,15 @@ export function renderEpubBookMarkdown(book: Book, annotations: EpubAnnotation[]
 
 export function renderPdfBookMarkdown(book: Book, pages: PdfRenderedPage[]): string {
   const lines: string[] = [];
-  lines.push(`# ${book.title}`);
-  lines.push("");
-  lines.push(`- 作者: ${book.author ?? "-"}`);
-  if (book.publisher) {
-    lines.push(`- 出版商: ${book.publisher}`);
-  }
-  lines.push("- 格式: PDF（Beta）");
-  lines.push(`- 标注页数: ${pages.length}`);
-  if (book.path) {
-    lines.push(`- 源文件: \`${book.path}\``);
-  }
-  lines.push("");
+  pushFrontmatter(lines, [
+    ["title", book.title],
+    ["author", book.author ?? "-"],
+    ["publisher", book.publisher],
+    ["format", "PDF"],
+    ["pdf_beta", true],
+    ["annotated_pages", pages.length],
+    ["source_file", book.path],
+  ]);
 
   if (pages.length === 0) {
     lines.push("> 本书暂无可同步的 PDF 标注。");
