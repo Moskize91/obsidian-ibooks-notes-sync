@@ -7,7 +7,9 @@ type PdfJsAnnotation = {
   id?: string;
   subtype?: string;
   contents?: string;
+  contentsObj?: { str?: string };
   rect?: number[];
+  popupRef?: string;
 };
 
 type PdfJsModule = typeof import("pdfjs-dist/legacy/build/pdf.mjs");
@@ -51,6 +53,28 @@ function normalizeText(input: string | undefined): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
+function getAnnotationContents(
+  annotation: PdfJsAnnotation,
+  byId: Map<string, PdfJsAnnotation>,
+): string | null {
+  const direct = normalizeText(annotation.contents ?? annotation.contentsObj?.str);
+  if (direct) {
+    return direct;
+  }
+
+  const popupRef = annotation.popupRef;
+  if (!popupRef) {
+    return null;
+  }
+
+  const popupAnnotation = byId.get(popupRef);
+  if (!popupAnnotation) {
+    return null;
+  }
+
+  return normalizeText(popupAnnotation.contents ?? popupAnnotation.contentsObj?.str);
+}
+
 export async function extractPdfPageAnnotations(pdfPath: string): Promise<PdfPageAnnotations[]> {
   const pdfjs = await getPdfJsModule();
   const loadingTask = pdfjs.getDocument({
@@ -67,18 +91,26 @@ export async function extractPdfPageAnnotations(pdfPath: string): Promise<PdfPag
     const viewport = page.getViewport({ scale: 1 });
     const rawAnnotations = (await page.getAnnotations()) as PdfJsAnnotation[];
 
+    const annotationsById = new Map<string, PdfJsAnnotation>();
+    for (const annotation of rawAnnotations) {
+      if (annotation.id) {
+        annotationsById.set(annotation.id, annotation);
+      }
+    }
+
     const annotations: PdfAnnotation[] = rawAnnotations
       .map((annotation, index) => {
         return {
           id: annotation.id ?? `${pageNumber}-${index}`,
           pageNumber,
           subtype: normalizeSubtype(annotation.subtype),
-          contents: normalizeText(annotation.contents),
+          contents: getAnnotationContents(annotation, annotationsById),
           rect: toRect(annotation.rect),
         };
       })
       .filter((annotation) => {
-        if (annotation.subtype.toLowerCase() === "link") {
+        const subtype = annotation.subtype.toLowerCase();
+        if (subtype === "link" || subtype === "popup") {
           return false;
         }
 
@@ -167,6 +199,22 @@ export function sortPdfAnnotations(annotations: PdfAnnotation[]): PdfAnnotation[
 
     return left.id.localeCompare(right.id);
   });
+}
+
+export function shouldOverlayPdfAnnotationRect(annotation: Pick<PdfAnnotation, "subtype" | "rect">): boolean {
+  if (!annotation.rect) {
+    return false;
+  }
+
+  const subtype = annotation.subtype.toLowerCase();
+  return (
+    subtype === "highlight" ||
+    subtype === "underline" ||
+    subtype === "squiggly" ||
+    subtype === "strikeout" ||
+    subtype === "square" ||
+    subtype === "circle"
+  );
 }
 
 export async function overlayPdfAnnotationNumbers(

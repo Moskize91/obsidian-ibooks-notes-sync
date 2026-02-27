@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { pdfAnnotationLabel, sortPdfAnnotations } from "../src/lib/pdf";
+import { pdfAnnotationLabel, shouldOverlayPdfAnnotationRect, sortPdfAnnotations } from "../src/lib/pdf";
 import type { PdfAnnotation } from "../src/lib/types";
 
 test("pdfAnnotationLabel prefers explicit contents", () => {
@@ -48,4 +48,28 @@ test("sortPdfAnnotations places positioned annotations first", () => {
   const sorted = sortPdfAnnotations(annotations);
   assert.equal(sorted[0]?.id, "rect");
   assert.equal(sorted[1]?.id, "no-rect");
+});
+
+test("shouldOverlayPdfAnnotationRect only allows area annotations", () => {
+  assert.equal(
+    shouldOverlayPdfAnnotationRect({
+      subtype: "Highlight",
+      rect: { x1: 10, y1: 10, x2: 20, y2: 20 },
+    }),
+    true,
+  );
+  assert.equal(
+    shouldOverlayPdfAnnotationRect({
+      subtype: "Text",
+      rect: { x1: 10, y1: 10, x2: 20, y2: 20 },
+    }),
+    false,
+  );
+  assert.equal(
+    shouldOverlayPdfAnnotationRect({
+      subtype: "Popup",
+      rect: { x1: 10, y1: 10, x2: 20, y2: 20 },
+    }),
+    false,
+  );
 });

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { renderEpubBookMarkdown, renderIndexMarkdown } from "../src/lib/render-markdown";
+import { renderEpubBookMarkdown, renderIndexMarkdown, renderPdfBookMarkdown } from "../src/lib/render-markdown";
 import type { Book, EpubAnnotation } from "../src/lib/types";
 
 const demoBook: Book = {
@@ -167,4 +167,119 @@ test("renderEpubBookMarkdown keeps single separator between entries", () => {
   assert.doesNotMatch(output, /---\n\n---/);
   assert.match(output, /First/);
   assert.match(output, /Second/);
+});
+
+test("renderPdfBookMarkdown omits page headers and uses image embedding with page separators", () => {
+  const pdfBook: Book = {
+    ...demoBook,
+    format: "PDF",
+  };
+  const output = renderPdfBookMarkdown(pdfBook, [
+    {
+      pageNumber: 8,
+      imageRelativePath: "assets/pdf/asset-id/page-8.png",
+      notes: [
+        {
+          number: 1,
+          label: "高亮标注（无附注）",
+          subtype: "Highlight",
+          hasRect: true,
+        },
+      ],
+    },
+  ]);
+
+  assert.doesNotMatch(output, /## 页面标注/);
+  assert.doesNotMatch(output, /### 第 8 页/);
+  assert.match(output, /---/);
+  assert.match(output, /> !\[第8页\]\(\.\.\/assets\/pdf\/asset-id\/page-8\.png\) 第 8 页/);
+  assert.match(output, /1\. \[Highlight\] 高亮标注（无附注）/);
+  const imageIndex = output.indexOf("> ![第8页]");
+  const noteIndex = output.indexOf("1. [Highlight] 高亮标注（无附注）");
+  assert.notEqual(imageIndex, -1);
+  assert.notEqual(noteIndex, -1);
+  assert.ok(imageIndex < noteIndex);
+  assert.doesNotMatch(output, /\n!\[第8页\]/);
+});
+
+test("renderEpubBookMarkdown uses chapter spine order instead of title sort", () => {
+  const annotations: EpubAnnotation[] = [
+    {
+      id: "a1",
+      assetId: demoBook.assetId,
+      chapterKey: "id_7",
+      selectedText: "From chapter 7",
+      noteText: null,
+      location: "epubcfi(/6/14[id_7]!/4/2[chapter]/10/1,:1,:5)",
+      createdAt: new Date("2026-02-01T00:00:01Z"),
+      kind: "highlight",
+    },
+    {
+      id: "a2",
+      assetId: demoBook.assetId,
+      chapterKey: "id_6",
+      selectedText: "From chapter 6",
+      noteText: null,
+      location: "epubcfi(/6/12[id_6]!/4/2[chapter]/10/1,:1,:5)",
+      createdAt: new Date("2026-02-01T00:00:00Z"),
+      kind: "highlight",
+    },
+  ];
+
+  const output = renderEpubBookMarkdown(
+    demoBook,
+    annotations,
+    new Map([
+      ["id_6", "新版前言"],
+      ["id_7", "《周髀算经》新论"],
+    ]),
+    new Map([
+      ["id_6", 5],
+      ["id_7", 6],
+    ]),
+  );
+
+  const chapter6Index = output.indexOf("## 新版前言");
+  const chapter7Index = output.indexOf("## 《周髀算经》新论");
+  assert.notEqual(chapter6Index, -1);
+  assert.notEqual(chapter7Index, -1);
+  assert.ok(chapter6Index < chapter7Index);
+});
+
+test("renderEpubBookMarkdown uses cfi position order inside chapter", () => {
+  const annotations: EpubAnnotation[] = [
+    {
+      id: "late-created-but-early-position",
+      assetId: demoBook.assetId,
+      chapterKey: "id_7",
+      selectedText: "Position 66",
+      noteText: null,
+      location: "epubcfi(/6/14[id_7]!/4/2[chapter],/66/1:6,/68/2/3:4)",
+      createdAt: new Date("2026-02-01T00:00:10Z"),
+      kind: "highlight",
+    },
+    {
+      id: "early-created-but-late-position",
+      assetId: demoBook.assetId,
+      chapterKey: "id_7",
+      selectedText: "Position 206",
+      noteText: null,
+      location: "epubcfi(/6/14[id_7]!/4/2[chapter]/206/1,:0,:47)",
+      createdAt: new Date("2026-02-01T00:00:00Z"),
+      kind: "highlight",
+    },
+  ];
+
+  const output = renderEpubBookMarkdown(
+    demoBook,
+    annotations,
+    new Map([["id_7", "《周髀算经》新论"]]),
+    new Map([["id_7", 6]]),
+  );
+
+  const pos66Index = output.indexOf("Position 66");
+  const pos206Index = output.indexOf("Position 206");
+  assert.notEqual(pos66Index, -1);
+  assert.notEqual(pos206Index, -1);
+  assert.ok(pos66Index < pos206Index);
 });

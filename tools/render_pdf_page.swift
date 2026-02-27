@@ -30,6 +30,25 @@ guard let page = document.page(at: pageNumber - 1) else {
     fail("cannot read page \(pageNumber)")
 }
 
+let annotations = page.annotations
+let originalShouldDisplay = annotations.map { $0.shouldDisplay }
+for annotation in annotations {
+    let subtype = (annotation.type ?? "").lowercased()
+    // Keep point-style note icons so users can visually locate note anchors.
+    // Hide other built-in appearances (especially Popup) to avoid noisy large boxes.
+    annotation.shouldDisplay =
+        subtype == "text" ||
+        subtype == "sound" ||
+        subtype == "fileattachment" ||
+        subtype == "stamp" ||
+        subtype == "caret"
+}
+defer {
+    for (index, annotation) in annotations.enumerated() {
+        annotation.shouldDisplay = originalShouldDisplay[index]
+    }
+}
+
 let bounds = page.bounds(for: .mediaBox)
 let imageSize = NSSize(width: bounds.width * scale, height: bounds.height * scale)
 let image = NSImage(size: imageSize)

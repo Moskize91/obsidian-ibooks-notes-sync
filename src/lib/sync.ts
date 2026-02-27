@@ -8,13 +8,14 @@ import {
   readPdfFallbackCounts,
 } from "./ibooks-data";
 import { buildBookFileRelativePathByAssetId, toShortBookFileStem } from "./book-file-name";
-import { readEpubChapterTitleByKey, sortEpubAnnotations } from "./epub";
+import { readEpubChapterOrderByKey, readEpubChapterTitleByKey, sortEpubAnnotations } from "./epub";
 import { log } from "./logger";
 import {
   extractPdfPageAnnotations,
   overlayPdfAnnotationNumbers,
   pdfAnnotationLabel,
   renderPdfPageToPng,
+  shouldOverlayPdfAnnotationRect,
   sortPdfAnnotations,
 } from "./pdf";
 import {
@@ -69,7 +70,7 @@ type BookFingerprint = {
 };
 
 const LEGACY_PDF_FALLBACK_MARKER = "当前版本无法展开内容";
-const OUTPUT_SCHEMA_VERSION = 12;
+const OUTPUT_SCHEMA_VERSION = 20;
 
 async function pathExists(inputPath: string): Promise<boolean> {
   try {
@@ -246,7 +247,7 @@ async function generatePdfPages(
       renderPdfPageToPng(book.path, page.pageNumber, imageAbsolutePath);
 
       const overlayRects = numbered
-        .filter((item) => item.annotation.rect)
+        .filter((item) => shouldOverlayPdfAnnotationRect(item.annotation))
         .map((item) => {
           return {
             number: item.number,
@@ -443,6 +444,7 @@ export async function runSync(config: CliConfig, paths: IBooksPaths, options: Sy
 
   let annotationsByAssetId = new Map<string, EpubAnnotation[]>();
   const chapterTitleByKeyByAssetId = new Map<string, Map<string, string>>();
+  const chapterOrderByKeyByAssetId = new Map<string, Map<string, number>>();
   if (changedEpubAssetIds.size > 0) {
     const sortedEpubAnnotations = sortEpubAnnotations(readEpubAnnotations(paths.annotationDbPath, paths.libraryDbPath));
     annotationsByAssetId = buildAnnotationsByAssetId(sortedEpubAnnotations, changedEpubAssetIds);
@@ -450,8 +452,12 @@ export async function runSync(config: CliConfig, paths: IBooksPaths, options: Sy
       changedSnapshots
         .filter((snapshot) => snapshot.book.format === "EPUB")
         .map(async (snapshot) => {
-          const chapterTitleByKey = await readEpubChapterTitleByKey(snapshot.book.path);
+          const [chapterTitleByKey, chapterOrderByKey] = await Promise.all([
+            readEpubChapterTitleByKey(snapshot.book.path),
+            readEpubChapterOrderByKey(snapshot.book.path),
+          ]);
           chapterTitleByKeyByAssetId.set(snapshot.book.assetId, chapterTitleByKey);
+          chapterOrderByKeyByAssetId.set(snapshot.book.assetId, chapterOrderByKey);
         }),
     );
   }
@@ -496,11 +502,12 @@ export async function runSync(config: CliConfig, paths: IBooksPaths, options: Sy
         if (snapshot.book.format === "EPUB") {
           const notes = annotationsByAssetId.get(snapshot.book.assetId) ?? [];
           const chapterTitleByKey = chapterTitleByKeyByAssetId.get(snapshot.book.assetId);
+          const chapterOrderByKey = chapterOrderByKeyByAssetId.get(snapshot.book.assetId);
           if (notes.length === 0) {
             nextBookFileRelativePath = null;
             nextPdfAssetDirRelativePath = null;
           } else {
-            markdown = renderEpubBookMarkdown(snapshot.book, notes, chapterTitleByKey);
+            markdown = renderEpubBookMarkdown(snapshot.book, notes, chapterTitleByKey, chapterOrderByKey);
             nextBookFileRelativePath = snapshot.bookFileRelativePath;
           }
         } else {

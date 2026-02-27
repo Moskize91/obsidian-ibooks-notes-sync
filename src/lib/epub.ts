@@ -61,16 +61,31 @@ function findRootfilePath(containerXml: string): string | null {
 type ParsedOpf = {
   manifestHrefById: Map<string, string>;
   ncxItemId: string | null;
+  spineOrderById: Map<string, number>;
 };
 
 function parseOpfManifest(opfXml: string): ParsedOpf {
   const manifestHrefById = new Map<string, string>();
   let ncxItemId: string | null = null;
+  const spineOrderById = new Map<string, number>();
 
   const spineTagMatch = opfXml.match(/<spine\b[^>]*>/i);
   if (spineTagMatch?.[0]) {
     const spineAttrs = parseXmlAttributes(spineTagMatch[0]);
     ncxItemId = spineAttrs.get("toc") ?? null;
+  }
+
+  const itemrefPattern = /<itemref\b[^>]*>/gi;
+  let itemrefMatch = itemrefPattern.exec(opfXml);
+  let spineIndex = 0;
+  while (itemrefMatch) {
+    const attrs = parseXmlAttributes(itemrefMatch[0]);
+    const idref = attrs.get("idref");
+    if (idref && !spineOrderById.has(idref)) {
+      spineOrderById.set(idref, spineIndex);
+      spineIndex += 1;
+    }
+    itemrefMatch = itemrefPattern.exec(opfXml);
   }
 
   const itemPattern = /<item\b[^>]*>/gi;
@@ -88,7 +103,7 @@ function parseOpfManifest(opfXml: string): ParsedOpf {
     itemMatch = itemPattern.exec(opfXml);
   }
 
-  return { manifestHrefById, ncxItemId };
+  return { manifestHrefById, ncxItemId, spineOrderById };
 }
 
 function parseTocHrefTitleMap(ncxXml: string): Map<string, string> {
@@ -170,6 +185,33 @@ export async function readEpubChapterTitleByKey(bookPath: string | null): Promis
   }
 
   return chapterTitleByKey;
+}
+
+export async function readEpubChapterOrderByKey(bookPath: string | null): Promise<Map<string, number>> {
+  if (!bookPath) {
+    return new Map<string, number>();
+  }
+
+  const stat = await fs.stat(bookPath).catch(() => null);
+  if (!stat?.isDirectory()) {
+    return new Map<string, number>();
+  }
+
+  const containerPath = path.join(bookPath, "META-INF", "container.xml");
+  const containerXml = await fs.readFile(containerPath, "utf8").catch(() => null);
+  if (!containerXml) {
+    return new Map<string, number>();
+  }
+
+  const rootfileRelativePath = findRootfilePath(containerXml) ?? "OEBPS/content.opf";
+  const opfPath = path.resolve(bookPath, rootfileRelativePath);
+  const opfXml = await fs.readFile(opfPath, "utf8").catch(() => null);
+  if (!opfXml) {
+    return new Map<string, number>();
+  }
+
+  const { spineOrderById } = parseOpfManifest(opfXml);
+  return spineOrderById;
 }
 
 export function extractChapterKey(location: string | null): string {

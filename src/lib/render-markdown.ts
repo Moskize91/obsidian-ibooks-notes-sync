@@ -15,6 +15,7 @@ type PdfRenderedPage = {
 };
 
 type FrontmatterValue = string | number | boolean;
+const LOCATION_SORT_COLLATOR = new Intl.Collator("en", { numeric: true, sensitivity: "base" });
 
 function fmtDate(date: Date): string {
   return date.toISOString().replace("T", " ").slice(0, 19);
@@ -93,6 +94,40 @@ function collapseWhitespace(input: string): string {
   return input.replace(/\s+/g, " ").trim();
 }
 
+function normalizeLocationForSort(location: string | null): string {
+  if (!location) {
+    return "";
+  }
+  return location
+    .replace(/^epubcfi\(/i, "")
+    .replace(/\)$/g, "")
+    .replace(/\[[^\]]*]/g, "");
+}
+
+function compareEpubAnnotationsBySourceOrder(
+  left: EpubAnnotation,
+  right: EpubAnnotation,
+  chapterOrderByKey?: Map<string, number>,
+): number {
+  const leftChapterOrder = chapterOrderByKey?.get(left.chapterKey) ?? Number.MAX_SAFE_INTEGER;
+  const rightChapterOrder = chapterOrderByKey?.get(right.chapterKey) ?? Number.MAX_SAFE_INTEGER;
+  if (leftChapterOrder !== rightChapterOrder) {
+    return leftChapterOrder - rightChapterOrder;
+  }
+
+  const leftLocation = normalizeLocationForSort(left.location);
+  const rightLocation = normalizeLocationForSort(right.location);
+  const locationCompare = LOCATION_SORT_COLLATOR.compare(leftLocation, rightLocation);
+  if (locationCompare !== 0) {
+    return locationCompare;
+  }
+
+  if (left.createdAt.getTime() !== right.createdAt.getTime()) {
+    return left.createdAt.getTime() - right.createdAt.getTime();
+  }
+  return left.id.localeCompare(right.id);
+}
+
 function trimBlankEdges(input: string): string {
   const lines = input.replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
   let start = 0;
@@ -149,6 +184,7 @@ export function renderEpubBookMarkdown(
   book: Book,
   annotations: EpubAnnotation[],
   chapterTitleByKey?: Map<string, string>,
+  chapterOrderByKey?: Map<string, number>,
 ): string {
   const lines: string[] = [];
   pushFrontmatter(lines, [
@@ -166,19 +202,39 @@ export function renderEpubBookMarkdown(
     return lines.join("\n");
   }
 
-  const chapterMap = new Map<string, EpubAnnotation[]>();
-  for (const annotation of annotations) {
-    const key = toDisplayChapterKey(annotation.chapterKey, chapterTitleByKey);
-    const list = chapterMap.get(key) ?? [];
-    list.push(annotation);
-    chapterMap.set(key, list);
+  const sortedAnnotations = [...annotations].sort((left, right) => {
+    return compareEpubAnnotationsBySourceOrder(left, right, chapterOrderByKey);
+  });
+
+  const chapterMap = new Map<string, { order: number; annotations: EpubAnnotation[] }>();
+  for (const annotation of sortedAnnotations) {
+    const chapterDisplayKey = toDisplayChapterKey(annotation.chapterKey, chapterTitleByKey);
+    const chapterOrder = chapterOrderByKey?.get(annotation.chapterKey) ?? Number.MAX_SAFE_INTEGER;
+    const existing = chapterMap.get(chapterDisplayKey);
+    if (existing) {
+      existing.annotations.push(annotation);
+      if (chapterOrder < existing.order) {
+        existing.order = chapterOrder;
+      }
+      continue;
+    }
+    chapterMap.set(chapterDisplayKey, { order: chapterOrder, annotations: [annotation] });
   }
 
-  const chapterKeys = Array.from(chapterMap.keys()).sort((a, b) => a.localeCompare(b));
+  const chapterKeys = Array.from(chapterMap.keys()).sort((left, right) => {
+    const leftEntry = chapterMap.get(left);
+    const rightEntry = chapterMap.get(right);
+    const leftOrder = leftEntry?.order ?? Number.MAX_SAFE_INTEGER;
+    const rightOrder = rightEntry?.order ?? Number.MAX_SAFE_INTEGER;
+    if (leftOrder !== rightOrder) {
+      return leftOrder - rightOrder;
+    }
+    return left.localeCompare(right);
+  });
   for (const chapterKey of chapterKeys) {
     lines.push(`## ${chapterKey}`);
     lines.push("");
-    const chapterAnnotations = chapterMap.get(chapterKey) ?? [];
+    const chapterAnnotations = chapterMap.get(chapterKey)?.annotations ?? [];
     for (const [index, annotation] of chapterAnnotations.entries()) {
       if (index === 0) {
         lines.push("---");
@@ -226,24 +282,30 @@ export function renderPdfBookMarkdown(book: Book, pages: PdfRenderedPage[]): str
     return lines.join("\n");
   }
 
-  lines.push("## 页面标注");
-  lines.push("");
   for (const page of pages) {
-    lines.push(`### 第 ${page.pageNumber} 页`);
-    lines.push("");
-    if (page.imageRelativePath) {
-      lines.push(`![第${page.pageNumber}页标注](${page.imageRelativePath})`);
+    if (lines[lines.length - 1] !== "") {
       lines.push("");
     }
+    lines.push("---");
+    lines.push("");
+
+    if (page.imageRelativePath) {
+      const pageLinkPath = path.posix.join("..", page.imageRelativePath);
+      lines.push(`> ![第${page.pageNumber}页](${pageLinkPath}) 第 ${page.pageNumber} 页`);
+    } else {
+      lines.push(`> 第 ${page.pageNumber} 页`);
+    }
+    lines.push("");
+
     if (page.notes.length === 0) {
       lines.push("- 无可展示笔记");
-      lines.push("");
-      continue;
+    } else {
+      for (const note of page.notes) {
+        const positionTag = note.hasRect ? "" : "（无定位）";
+        lines.push(`${note.number}. [${note.subtype}]${positionTag} ${note.label}`);
+      }
     }
-    for (const note of page.notes) {
-      const positionTag = note.hasRect ? "" : "（无定位）";
-      lines.push(`${note.number}. [${note.subtype}]${positionTag} ${note.label}`);
-    }
+
     lines.push("");
   }
 
