@@ -165,6 +165,10 @@ function shouldRegenerateBook(snapshot: BookSyncSnapshot, previous: SyncAssetSta
   return false;
 }
 
+function shouldForcePdfResync(previousStateAssets: Record<string, SyncAssetState>, assetsRootExists: boolean): boolean {
+  return Object.keys(previousStateAssets).length > 0 && !assetsRootExists;
+}
+
 async function hasLegacyPdfFallbackMarker(outputDir: string, previous: SyncAssetState | undefined): Promise<boolean> {
   if (!previous?.bookFileRelativePath) {
     return false;
@@ -434,8 +438,19 @@ export async function runSync(config: CliConfig, paths: IBooksPaths, options: Sy
     };
   }
 
+  const assetsRootExists = await pathExists(path.join(outputDir, "assets"));
+  const forcePdfResync = shouldForcePdfResync(previousState.assets, assetsRootExists);
+  if (forcePdfResync) {
+    log("info", "assets directory missing; all PDF books will be re-synced.");
+  }
+
   const changedSnapshots: BookSyncSnapshot[] = [];
   for (const snapshot of bookSnapshots) {
+    if (forcePdfResync && snapshot.book.format === "PDF") {
+      changedSnapshots.push(snapshot);
+      continue;
+    }
+
     const previous = previousState.assets[snapshot.book.assetId];
     if (shouldRegenerateBook(snapshot, previous)) {
       changedSnapshots.push(snapshot);
@@ -683,3 +698,5 @@ export async function runSync(config: CliConfig, paths: IBooksPaths, options: Sy
 
   return { stats, outputDir };
 }
+
+export { shouldForcePdfResync };
