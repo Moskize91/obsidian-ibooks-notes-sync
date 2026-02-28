@@ -172,6 +172,19 @@ function buildEpubLocationLink(book: Book, location: string | null): string {
   return `ibooks://assetid/${book.assetId}#${location}`;
 }
 
+function buildPdfStandardPageLink(book: Book, pageNumber: number): string {
+  const absolutePath = path.isAbsolute(book.path) ? book.path : path.resolve(book.path);
+  return `${absolutePath}#page=${pageNumber}`;
+}
+
+function escapeHtmlAttr(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
 export function getBookFileRelativePath(book: Book, booksDirName: string): string {
   const fileName = `${book.title.replace(/[<>:"/\\|?*]/g, "_")}-${book.assetId.slice(0, 8)}.md`;
   return path.posix.join(booksDirName, fileName);
@@ -288,9 +301,14 @@ export function renderPdfBookMarkdown(book: Book, pages: PdfRenderedPage[]): str
 
     if (page.imageRelativePath) {
       const pageLinkPath = path.posix.join("..", page.imageRelativePath);
-      lines.push(`> ![第${page.pageNumber}页](${pageLinkPath}) 第 ${page.pageNumber} 页`);
+      const escapedImagePath = escapeHtmlAttr(pageLinkPath);
+      const escapedPageLink = escapeHtmlAttr(buildPdfStandardPageLink(book, page.pageNumber));
+      lines.push(
+        `<p align="center"><img src="${escapedImagePath}" alt="第${page.pageNumber}页" /> <a href="${escapedPageLink}">第 ${page.pageNumber} 页</a></p>`,
+      );
     } else {
-      lines.push(`> 第 ${page.pageNumber} 页`);
+      const escapedPageLink = escapeHtmlAttr(buildPdfStandardPageLink(book, page.pageNumber));
+      lines.push(`<p align="center"><a href="${escapedPageLink}">第 ${page.pageNumber} 页</a></p>`);
     }
     lines.push("");
 

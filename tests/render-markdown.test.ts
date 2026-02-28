@@ -173,6 +173,7 @@ test("renderPdfBookMarkdown renders single text note directly", () => {
   const pdfBook: Book = {
     ...demoBook,
     format: "PDF",
+    path: "/tmp/demo.pdf",
   };
   const output = renderPdfBookMarkdown(pdfBook, [
     {
@@ -192,16 +193,20 @@ test("renderPdfBookMarkdown renders single text note directly", () => {
   assert.doesNotMatch(output, /## 页面标注/);
   assert.doesNotMatch(output, /### 第 8 页/);
   assert.match(output, /---/);
-  assert.match(output, /> !\[第8页\]\(\.\.\/assets\/pdf\/asset-id\/page-8\.png\) 第 8 页/);
+  assert.match(
+    output,
+    /<p align="center"><img src="\.\.\/assets\/pdf\/asset-id\/page-8\.png" alt="第8页" \/> <a href="\/tmp\/demo\.pdf#page=8">第 8 页<\/a><\/p>/,
+  );
   assert.match(output, /> 单条原文内容/);
   assert.match(output, /\n ?单条笔记内容\n/);
   assert.doesNotMatch(output, /\*\*标注/);
-  const imageIndex = output.indexOf("> ![第8页]");
+  const imageIndex = output.indexOf('<p align="center"><img src="../assets/pdf/asset-id/page-8.png" alt="第8页" />');
   const noteIndex = output.indexOf("单条笔记内容");
   assert.notEqual(imageIndex, -1);
   assert.notEqual(noteIndex, -1);
   assert.ok(imageIndex < noteIndex);
   assert.doesNotMatch(output, /\n!\[第8页\]/);
+  assert.doesNotMatch(output, /^> !\[第8页\]/m);
 });
 
 test("renderPdfBookMarkdown renders multiple notes with markers and separators", () => {
