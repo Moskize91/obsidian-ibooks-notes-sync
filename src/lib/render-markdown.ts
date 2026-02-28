@@ -173,6 +173,9 @@ function buildEpubLocationLink(book: Book, location: string | null): string {
 }
 
 function buildPdfStandardPageLink(book: Book, pageNumber: number): string {
+  if (!book.path) {
+    return "#";
+  }
   const absolutePath = path.isAbsolute(book.path) ? book.path : path.resolve(book.path);
   return `${absolutePath}#page=${pageNumber}`;
 }

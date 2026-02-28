@@ -1,5 +1,6 @@
 export type BookFormat = "EPUB" | "PDF" | "IBOOKS" | "UNKNOWN";
 export type SyncableBookFormat = "EPUB" | "PDF";
+export type PdfRenderBackend = "auto" | "swift" | "mutool" | "poppler";
 
 export type LogLevel = "info" | "warn" | "error";
 
@@ -18,6 +19,7 @@ export type CliConfig = {
   outputDir: string;
   managedDirName: string;
   pdfBetaEnabled: boolean;
+  pdfRenderBackend: PdfRenderBackend;
 };
 
 export type IBooksPaths = {

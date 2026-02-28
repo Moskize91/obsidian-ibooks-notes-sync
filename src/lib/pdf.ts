@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import path from "node:path";
 import sharp from "sharp";
-import type { PdfAnnotation, PdfPageAnnotations, Rect } from "./types";
+import type { PdfAnnotation, PdfPageAnnotations, PdfRenderBackend, Rect } from "./types";
 import { normalizeQuoteText } from "./quote-normalize";
 
 type PdfJsAnnotation = {
@@ -15,6 +15,11 @@ type PdfJsAnnotation = {
 };
 
 type PdfJsModule = typeof import("pdfjs-dist/legacy/build/pdf.mjs");
+type ResolvedPdfRenderBackend = Exclude<PdfRenderBackend, "auto">;
+type PdfRendererAvailability = {
+  mutool: boolean;
+  poppler: boolean;
+};
 type PdfOverlayAnnotation = {
   marker: string | null;
   rect: Rect;
@@ -26,6 +31,7 @@ type PdfPageTextItem = {
 };
 
 let cachedPdfJsModule: PdfJsModule | null = null;
+const cachedPdfCommandAvailability = new Map<string, boolean>();
 const NON_TEXT_PDF_SUBTYPES = new Set([
   "sound",
   "popup",
@@ -221,7 +227,9 @@ function extractTextByQuadPoints(annotation: PdfJsAnnotation, textItems: PdfPage
   return normalizeText(selectedTexts.join(" "));
 }
 
-async function readPdfPageTextItems(page: Awaited<ReturnType<PdfJsModule["getPage"]>>): Promise<PdfPageTextItem[]> {
+async function readPdfPageTextItems(page: {
+  getTextContent: () => Promise<{ items?: unknown[] }>;
+}): Promise<PdfPageTextItem[]> {
   const content = await page.getTextContent();
   const rawItems = (content.items ?? []) as Array<{
     str?: string;
@@ -512,11 +520,116 @@ function getRenderScriptPath(): string {
   return path.resolve(__dirname, "../../tools/render_pdf_page.swift");
 }
 
-export function renderPdfPageToPng(pdfPath: string, pageNumber: number, outputPath: string, scale = 2): void {
+function isCommandAvailable(command: string): boolean {
+  const cached = cachedPdfCommandAvailability.get(command);
+  if (cached !== undefined) {
+    return cached;
+  }
+
+  try {
+    execFileSync("which", [command], {
+      stdio: "ignore",
+    });
+    cachedPdfCommandAvailability.set(command, true);
+    return true;
+  } catch {
+    cachedPdfCommandAvailability.set(command, false);
+    return false;
+  }
+}
+
+export function detectPdfRendererAvailability(): PdfRendererAvailability {
+  return {
+    mutool: isCommandAvailable("mutool"),
+    poppler: isCommandAvailable("pdftocairo"),
+  };
+}
+
+export function resolvePdfRenderBackend(
+  requested: PdfRenderBackend,
+  availability: PdfRendererAvailability = detectPdfRendererAvailability(),
+): ResolvedPdfRenderBackend {
+  if (requested === "auto") {
+    if (availability.mutool) {
+      return "mutool";
+    }
+    if (availability.poppler) {
+      return "poppler";
+    }
+    return "swift";
+  }
+
+  if (requested === "mutool" && !availability.mutool) {
+    throw new Error('PDF renderer "mutool" is not available. Install with: brew install mupdf-tools');
+  }
+
+  if (requested === "poppler" && !availability.poppler) {
+    throw new Error('PDF renderer "poppler" is not available. Install with: brew install poppler');
+  }
+
+  return requested;
+}
+
+function renderPdfPageToPngWithSwift(pdfPath: string, pageNumber: number, outputPath: string, scale: number): void {
   execFileSync("swift", [getRenderScriptPath(), pdfPath, String(pageNumber), outputPath, String(scale)], {
     encoding: "utf8",
     maxBuffer: 8 * 1024 * 1024,
   });
+}
+
+function renderPdfPageToPngWithMutool(pdfPath: string, pageNumber: number, outputPath: string, scale: number): void {
+  const dpi = Math.max(36, Math.round(72 * scale));
+  execFileSync(
+    "mutool",
+    ["draw", "-q", "-F", "png", "-r", String(dpi), "-o", outputPath, pdfPath, String(pageNumber)],
+    {
+      encoding: "utf8",
+      maxBuffer: 8 * 1024 * 1024,
+    },
+  );
+}
+
+function renderPdfPageToPngWithPoppler(pdfPath: string, pageNumber: number, outputPath: string, scale: number): void {
+  const dpi = Math.max(36, Math.round(72 * scale));
+  const outputBasePath = outputPath.toLowerCase().endsWith(".png") ? outputPath.slice(0, -4) : outputPath;
+  execFileSync(
+    "pdftocairo",
+    [
+      "-png",
+      "-singlefile",
+      "-f",
+      String(pageNumber),
+      "-l",
+      String(pageNumber),
+      "-r",
+      String(dpi),
+      pdfPath,
+      outputBasePath,
+    ],
+    {
+      encoding: "utf8",
+      maxBuffer: 8 * 1024 * 1024,
+    },
+  );
+}
+
+export function renderPdfPageToPng(
+  pdfPath: string,
+  pageNumber: number,
+  outputPath: string,
+  scale = 2,
+  backend: PdfRenderBackend = "auto",
+): void {
+  const resolvedBackend = resolvePdfRenderBackend(backend);
+  if (resolvedBackend === "mutool") {
+    renderPdfPageToPngWithMutool(pdfPath, pageNumber, outputPath, scale);
+    return;
+  }
+  if (resolvedBackend === "poppler") {
+    renderPdfPageToPngWithPoppler(pdfPath, pageNumber, outputPath, scale);
+    return;
+  }
+  renderPdfPageToPngWithSwift(pdfPath, pageNumber, outputPath, scale);
 }
 
 export async function limitPngMaxDimension(imagePath: string, maxDimension: number): Promise<void> {

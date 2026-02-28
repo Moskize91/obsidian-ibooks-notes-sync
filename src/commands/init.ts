@@ -1,6 +1,13 @@
 import type { Command } from "commander";
 import path from "node:path";
-import { configExists, getConfigPath, getDefaultConfig, writeConfig } from "../lib/config";
+import {
+  configExists,
+  getConfigPath,
+  getDefaultConfig,
+  isPdfRenderBackend,
+  parsePdfRenderBackend,
+  writeConfig,
+} from "../lib/config";
 import { expandHome } from "../lib/path-utils";
 import type { CliConfig } from "../lib/types";
 
@@ -10,6 +17,7 @@ type InitOptions = {
   managedDirName?: string;
   pdfBetaEnabled?: boolean;
   pdfBetaDisabled?: boolean;
+  pdfRenderer?: string;
 };
 
 export function registerInitCommand(program: Command): void {
@@ -21,8 +29,15 @@ export function registerInitCommand(program: Command): void {
     .option("--managed-dir-name <name>", "managed subdirectory name")
     .option("--pdf-beta-enabled", "enable PDF beta flow", true)
     .option("--pdf-beta-disabled", "disable PDF beta flow")
+    .option("--pdf-renderer <backend>", "pdf renderer backend: auto|swift|mutool|poppler")
     .action((options: InitOptions) => {
       void (async () => {
+        if (options.pdfRenderer && !isPdfRenderBackend(options.pdfRenderer)) {
+          console.error("Invalid --pdf-renderer value. Expected one of: auto|swift|mutool|poppler");
+          process.exitCode = 1;
+          return;
+        }
+
         const exists = await configExists();
         if (exists && !options.force) {
           console.log(`Config already exists: ${getConfigPath()}`);
@@ -36,6 +51,7 @@ export function registerInitCommand(program: Command): void {
           managedDirName: options.managedDirName ?? defaults.managedDirName,
           pdfBetaEnabled:
             options.pdfBetaDisabled !== undefined ? false : (options.pdfBetaEnabled ?? defaults.pdfBetaEnabled),
+          pdfRenderBackend: parsePdfRenderBackend(options.pdfRenderer, defaults.pdfRenderBackend),
         };
 
         await writeConfig(config);
@@ -43,6 +59,7 @@ export function registerInitCommand(program: Command): void {
         console.log(`- outputDir: ${config.outputDir}`);
         console.log(`- managedDirName: ${config.managedDirName}`);
         console.log(`- pdfBetaEnabled: ${config.pdfBetaEnabled}`);
+        console.log(`- pdfRenderBackend: ${config.pdfRenderBackend}`);
       })().catch((error: unknown) => {
         if (error instanceof Error) {
           console.error(error.message);

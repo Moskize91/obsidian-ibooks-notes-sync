@@ -17,6 +17,7 @@ import {
   limitPngMaxDimension,
   overlayPdfAnnotationNumbers,
   renderPdfPageToPng,
+  resolvePdfRenderBackend,
   shouldOverlayPdfAnnotationRect,
   sortPdfAnnotations,
   toPdfNoteMarker,
@@ -32,6 +33,7 @@ import type {
   CliConfig,
   EpubAnnotation,
   IBooksPaths,
+  PdfRenderBackend,
   SyncAssetState,
   SyncStats,
   SyncableBookFormat,
@@ -229,6 +231,7 @@ async function generatePdfPages(
   book: Book,
   bookAssetDir: string,
   dryRun: boolean,
+  pdfRenderBackend: PdfRenderBackend,
 ): Promise<PdfPageRenderItem[]> {
   if (!book.path) {
     return [];
@@ -274,7 +277,7 @@ async function generatePdfPages(
 
     if (!dryRun) {
       await fs.mkdir(bookAssetDir, { recursive: true });
-      renderPdfPageToPng(book.path, page.pageNumber, imageAbsolutePath);
+      renderPdfPageToPng(book.path, page.pageNumber, imageAbsolutePath, 2, pdfRenderBackend);
       await limitPngMaxDimension(imageAbsolutePath, PDF_IMAGE_MAX_DIMENSION);
 
       const overlayRects = numbered
@@ -470,6 +473,20 @@ export async function runSync(config: CliConfig, paths: IBooksPaths, options: Sy
     stats.skippedBooks += 1;
   }
 
+  const hasChangedPdfSnapshots = changedSnapshots.some((snapshot) => snapshot.book.format === "PDF");
+  const shouldResolvePdfRenderer = config.pdfBetaEnabled && !options.dryRun && hasChangedPdfSnapshots;
+  const resolvedPdfRenderBackend: PdfRenderBackend = shouldResolvePdfRenderer
+    ? resolvePdfRenderBackend(config.pdfRenderBackend)
+    : "auto";
+  if (config.pdfBetaEnabled) {
+    const activePdfRendererDetail = options.dryRun
+      ? "dry-run(no render)"
+      : hasChangedPdfSnapshots
+        ? resolvedPdfRenderBackend
+        : "skip(no changed pdf)";
+    log("info", `pdf renderer: configured=${config.pdfRenderBackend}, active=${activePdfRendererDetail}`);
+  }
+
   const allCurrentAssetIds = new Set(allBooks.map((book) => book.assetId));
   const removedAssetIds = isFullSync
     ? Object.keys(previousState.assets).filter((assetId) => {
@@ -560,7 +577,12 @@ export async function runSync(config: CliConfig, paths: IBooksPaths, options: Sy
           let pages: PdfPageRenderItem[] = [];
           if (config.pdfBetaEnabled && snapshot.book.path) {
             stagedPdfAssetDir = path.join(stagingRoot, "assets", "pdf", snapshot.book.assetId);
-            pages = await generatePdfPages(snapshot.book, stagedPdfAssetDir, options.dryRun);
+            pages = await generatePdfPages(
+              snapshot.book,
+              stagedPdfAssetDir,
+              options.dryRun,
+              resolvedPdfRenderBackend,
+            );
             generatedPdfImageCount = pages.filter((page) => page.imageRelativePath).length;
           }
           if (pages.length === 0) {

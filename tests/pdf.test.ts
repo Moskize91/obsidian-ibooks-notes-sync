@@ -1,9 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  detectPdfRendererAvailability,
   extractPdfQuoteContent,
   extractPdfUserNoteContent,
   normalizePdfNoteText,
+  resolvePdfRenderBackend,
   shouldOverlayPdfAnnotationRect,
   sortPdfAnnotations,
   toPdfNoteMarker,
@@ -112,4 +114,52 @@ test("shouldOverlayPdfAnnotationRect only allows area annotations", () => {
     }),
     false,
   );
+});
+
+test("resolvePdfRenderBackend uses mutool first in auto mode", () => {
+  const backend = resolvePdfRenderBackend("auto", {
+    mutool: true,
+    poppler: true,
+  });
+  assert.equal(backend, "mutool");
+});
+
+test("resolvePdfRenderBackend falls back to poppler then swift in auto mode", () => {
+  const popplerBackend = resolvePdfRenderBackend("auto", {
+    mutool: false,
+    poppler: true,
+  });
+  const swiftBackend = resolvePdfRenderBackend("auto", {
+    mutool: false,
+    poppler: false,
+  });
+  assert.equal(popplerBackend, "poppler");
+  assert.equal(swiftBackend, "swift");
+});
+
+test("resolvePdfRenderBackend rejects unavailable explicit renderer", () => {
+  assert.throws(
+    () => {
+      resolvePdfRenderBackend("mutool", {
+        mutool: false,
+        poppler: true,
+      });
+    },
+    /brew install mupdf-tools/,
+  );
+  assert.throws(
+    () => {
+      resolvePdfRenderBackend("poppler", {
+        mutool: true,
+        poppler: false,
+      });
+    },
+    /brew install poppler/,
+  );
+});
+
+test("detectPdfRendererAvailability returns booleans", () => {
+  const availability = detectPdfRendererAvailability();
+  assert.equal(typeof availability.mutool, "boolean");
+  assert.equal(typeof availability.poppler, "boolean");
 });

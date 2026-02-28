@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { readBooks } from "./ibooks-data";
+import { detectPdfRendererAvailability, resolvePdfRenderBackend } from "./pdf";
 import { sqliteVersion } from "./sqlite";
 import type { CliConfig, IBooksPaths } from "./types";
 
@@ -84,6 +85,22 @@ export async function runDoctor(paths: IBooksPaths, config: CliConfig | null): P
     detail: paths.booksPlistPath,
   });
 
+  const pdfRendererAvailability = detectPdfRendererAvailability();
+  checks.push({
+    name: "mutool available",
+    ok: true,
+    detail: pdfRendererAvailability.mutool
+      ? "mutool found"
+      : "not found (optional, install: brew install mupdf-tools)",
+  });
+  checks.push({
+    name: "pdftocairo available",
+    ok: true,
+    detail: pdfRendererAvailability.poppler
+      ? "pdftocairo found"
+      : "not found (optional, install: brew install poppler)",
+  });
+
   if (paths.epubInfoDbPath) {
     checks.push({
       name: "EPUB info cache readable",
@@ -127,6 +144,21 @@ export async function runDoctor(paths: IBooksPaths, config: CliConfig | null): P
       ok: writable,
       detail: managedOutput,
     });
+
+    try {
+      const activePdfRenderer = resolvePdfRenderBackend(config.pdfRenderBackend, pdfRendererAvailability);
+      checks.push({
+        name: "pdf renderer config",
+        ok: true,
+        detail: `configured=${config.pdfRenderBackend}, active=${activePdfRenderer}`,
+      });
+    } catch (error: unknown) {
+      checks.push({
+        name: "pdf renderer config",
+        ok: false,
+        detail: error instanceof Error ? error.message : "invalid renderer configuration",
+      });
+    }
   } else {
     checks.push({
       name: "output directory writable",

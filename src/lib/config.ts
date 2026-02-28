@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 import { expandHome } from "./path-utils";
-import type { CliConfig } from "./types";
+import type { CliConfig, PdfRenderBackend } from "./types";
 
 const CONFIG_DIR = path.join(os.homedir(), ".config", "ibooks-notes-sync");
 const CONFIG_PATH = path.join(CONFIG_DIR, "config.json");
@@ -16,7 +16,19 @@ export function getDefaultConfig(): CliConfig {
     outputDir: path.join(os.homedir(), "Documents"),
     managedDirName: "ibooks-notes-sync",
     pdfBetaEnabled: true,
+    pdfRenderBackend: "auto",
   };
+}
+
+export function isPdfRenderBackend(value: unknown): value is PdfRenderBackend {
+  return value === "auto" || value === "swift" || value === "mutool" || value === "poppler";
+}
+
+export function parsePdfRenderBackend(value: unknown, fallback: PdfRenderBackend = "auto"): PdfRenderBackend {
+  if (isPdfRenderBackend(value)) {
+    return value;
+  }
+  return fallback;
 }
 
 export async function readConfig(): Promise<CliConfig> {
@@ -28,6 +40,7 @@ export async function readConfig(): Promise<CliConfig> {
     outputDir: expandHome(parsed.outputDir ?? defaults.outputDir),
     managedDirName: parsed.managedDirName ?? defaults.managedDirName,
     pdfBetaEnabled: parsed.pdfBetaEnabled ?? defaults.pdfBetaEnabled,
+    pdfRenderBackend: parsePdfRenderBackend(parsed.pdfRenderBackend, defaults.pdfRenderBackend),
   };
 }
 
