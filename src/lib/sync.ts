@@ -74,7 +74,7 @@ type BookFingerprint = {
 };
 
 const LEGACY_PDF_FALLBACK_MARKER = "当前版本无法展开内容";
-const OUTPUT_SCHEMA_VERSION = 30;
+const OUTPUT_SCHEMA_VERSION = 31;
 const PDF_IMAGE_MAX_DIMENSION = 1600;
 
 async function pathExists(inputPath: string): Promise<boolean> {
@@ -182,6 +182,20 @@ async function hasLegacyPdfFallbackMarker(outputDir: string, previous: SyncAsset
   try {
     const content = await fs.readFile(absolutePath, "utf8");
     return content.includes(LEGACY_PDF_FALLBACK_MARKER);
+  } catch {
+    return false;
+  }
+}
+
+async function hasLegacyEpubInternalChapterHeading(outputDir: string, previous: SyncAssetState | undefined): Promise<boolean> {
+  if (!previous?.bookFileRelativePath) {
+    return false;
+  }
+
+  const absolutePath = path.join(outputDir, previous.bookFileRelativePath);
+  try {
+    const content = await fs.readFile(absolutePath, "utf8");
+    return /^##\s+.+\.x?html?\s*$/im.test(content);
   } catch {
     return false;
   }
@@ -469,6 +483,11 @@ export async function runSync(config: CliConfig, paths: IBooksPaths, options: Sy
     }
 
     if (snapshot.book.format === "PDF" && (await hasLegacyPdfFallbackMarker(outputDir, previous))) {
+      changedSnapshots.push(snapshot);
+      continue;
+    }
+
+    if (snapshot.book.format === "EPUB" && (await hasLegacyEpubInternalChapterHeading(outputDir, previous))) {
       changedSnapshots.push(snapshot);
       continue;
     }

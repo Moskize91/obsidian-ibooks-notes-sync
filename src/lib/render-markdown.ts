@@ -107,6 +107,10 @@ function toDisplayChapterKey(rawChapterKey: string, chapterTitleByKey?: Map<stri
   if (/^id[_-]?\d+$/i.test(chapterKey)) {
     return "未分章";
   }
+  // Raw chapter keys like "x_part01.xhtml" are EPUB internal file names, not user-facing chapter labels.
+  if (/\.x?html?$/i.test(chapterKey)) {
+    return "未分章";
+  }
   return chapterKey;
 }
 

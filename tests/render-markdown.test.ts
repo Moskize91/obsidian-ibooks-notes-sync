@@ -112,7 +112,8 @@ test("renderEpubBookMarkdown groups by chapter", () => {
   assert.match(output, /author: "Author"/);
   assert.match(output, /format: "EPUB"/);
   assert.match(output, /annotation_count: 1/);
-  assert.match(output, /## chapter-1.xhtml/);
+  assert.match(output, /## 未分章/);
+  assert.doesNotMatch(output, /## chapter-1\.xhtml/);
   assert.match(output, /\[2026-02-01 00:00:00\]\(<ibooks:\/\/assetid\/ABCDEF0123456789#epubcfi\(.*\)>\) Highlighted text/);
   assert.match(output, /\nMy note\n/);
   assert.doesNotMatch(output, /- 笔记:/);

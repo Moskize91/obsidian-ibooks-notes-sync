@@ -1,9 +1,12 @@
+import { execFile } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { promisify } from "node:util";
 import type { EpubAnnotation } from "./types";
 
 const CHAPTER_PATTERN = /\[([^\]]+)\]/;
 const XML_ENTITY_PATTERN = /&(#x?[0-9a-fA-F]+|amp|lt|gt|quot|apos);/g;
+const execFileAsync = promisify(execFile);
 
 function decodeXmlEntities(input: string): string {
   return input.replace(XML_ENTITY_PATTERN, (match, entity: string) => {
@@ -37,11 +40,11 @@ function decodeXmlEntities(input: string): string {
 
 function parseXmlAttributes(tag: string): Map<string, string> {
   const attrs = new Map<string, string>();
-  const attrPattern = /([A-Za-z_:][\w:.-]*)\s*=\s*"([^"]*)"/g;
+  const attrPattern = /([A-Za-z_:][\w:.-]*)\s*=\s*(?:"([^"]*)"|'([^']*)')/g;
   let match = attrPattern.exec(tag);
   while (match) {
     const key = match[1];
-    const value = match[2];
+    const value = match[2] ?? match[3] ?? "";
     if (key && value !== undefined) {
       attrs.set(key, decodeXmlEntities(value));
     }
@@ -61,12 +64,14 @@ function findRootfilePath(containerXml: string): string | null {
 type ParsedOpf = {
   manifestHrefById: Map<string, string>;
   ncxItemId: string | null;
+  navItemId: string | null;
   spineOrderById: Map<string, number>;
 };
 
 function parseOpfManifest(opfXml: string): ParsedOpf {
   const manifestHrefById = new Map<string, string>();
   let ncxItemId: string | null = null;
+  let navItemId: string | null = null;
   const spineOrderById = new Map<string, number>();
 
   const spineTagMatch = opfXml.match(/<spine\b[^>]*>/i);
@@ -96,6 +101,14 @@ function parseOpfManifest(opfXml: string): ParsedOpf {
     const href = attrs.get("href");
     if (id && href) {
       manifestHrefById.set(id, href);
+      const properties = attrs
+        .get("properties")
+        ?.split(/\s+/)
+        .map((token) => token.trim())
+        .filter((token) => token.length > 0);
+      if (!navItemId && properties?.includes("nav")) {
+        navItemId = id;
+      }
       if (!ncxItemId && attrs.get("media-type") === "application/x-dtbncx+xml") {
         ncxItemId = id;
       }
@@ -103,7 +116,7 @@ function parseOpfManifest(opfXml: string): ParsedOpf {
     itemMatch = itemPattern.exec(opfXml);
   }
 
-  return { manifestHrefById, ncxItemId, spineOrderById };
+  return { manifestHrefById, ncxItemId, navItemId, spineOrderById };
 }
 
 function parseTocHrefTitleMap(ncxXml: string): Map<string, string> {
@@ -123,62 +136,86 @@ function parseTocHrefTitleMap(ncxXml: string): Map<string, string> {
   return hrefToTitle;
 }
 
-export async function readEpubChapterTitleByKey(bookPath: string | null): Promise<Map<string, string>> {
-  if (!bookPath) {
-    return new Map<string, string>();
-  }
+function stripHtmlTags(input: string): string {
+  return input.replace(/<[^>]*>/g, "");
+}
 
-  const stat = await fs.stat(bookPath).catch(() => null);
-  if (!stat?.isDirectory()) {
-    return new Map<string, string>();
-  }
+function parseNavHrefTitleMap(navXml: string): Map<string, string> {
+  const hrefToTitle = new Map<string, string>();
+  const tocNavMatch = navXml.match(/<nav\b[^>]*(?:\bepub:type|\btype)\s*=\s*(?:"toc"|'toc')[^>]*>([\s\S]*?)<\/nav>/i);
+  const navBody = tocNavMatch?.[1] ?? navXml;
+  const linkPattern = /<a\b[^>]*\bhref\s*=\s*(?:"([^"]+)"|'([^']+)')[^>]*>([\s\S]*?)<\/a>/gi;
 
-  const containerPath = path.join(bookPath, "META-INF", "container.xml");
-  const containerXml = await fs.readFile(containerPath, "utf8").catch(() => null);
-  if (!containerXml) {
-    return new Map<string, string>();
-  }
-
-  const rootfileRelativePath = findRootfilePath(containerXml) ?? "OEBPS/content.opf";
-  const opfPath = path.resolve(bookPath, rootfileRelativePath);
-  const opfXml = await fs.readFile(opfPath, "utf8").catch(() => null);
-  if (!opfXml) {
-    return new Map<string, string>();
-  }
-
-  const opfDir = path.dirname(opfPath);
-  const { manifestHrefById, ncxItemId } = parseOpfManifest(opfXml);
-  if (!ncxItemId) {
-    return new Map<string, string>();
-  }
-
-  const ncxHref = manifestHrefById.get(ncxItemId);
-  if (!ncxHref) {
-    return new Map<string, string>();
-  }
-
-  const ncxPath = path.resolve(opfDir, ncxHref);
-  const ncxXml = await fs.readFile(ncxPath, "utf8").catch(() => null);
-  if (!ncxXml) {
-    return new Map<string, string>();
-  }
-
-  const hrefToTitle = parseTocHrefTitleMap(ncxXml);
-  if (hrefToTitle.size === 0) {
-    return new Map<string, string>();
-  }
-
-  const chapterTitleByKey = new Map<string, string>();
-  for (const [key, href] of manifestHrefById.entries()) {
-    const contentAbsolute = path.resolve(opfDir, href);
-    let matchedTitle: string | null = null;
-    for (const [tocHref, tocTitle] of hrefToTitle.entries()) {
-      const tocAbsolute = path.resolve(path.dirname(ncxPath), tocHref);
-      if (tocAbsolute === contentAbsolute) {
-        matchedTitle = tocTitle;
-        break;
-      }
+  let linkMatch = linkPattern.exec(navBody);
+  while (linkMatch) {
+    const hrefRaw = linkMatch[1] ?? linkMatch[2] ?? "";
+    const href = decodeXmlEntities(hrefRaw).split("#")[0]?.trim();
+    const titleRaw = stripHtmlTags(linkMatch[3] ?? "");
+    const title = decodeXmlEntities(titleRaw).replace(/\s+/g, " ").trim();
+    if (title && href && !hrefToTitle.has(href)) {
+      hrefToTitle.set(href, title);
     }
+    linkMatch = linkPattern.exec(navBody);
+  }
+
+  return hrefToTitle;
+}
+
+function normalizeEpubRelativePath(inputPath: string): string {
+  const normalized = path.posix.normalize(inputPath.replace(/\\/g, "/"));
+  return normalized.replace(/^\/+/, "").replace(/^(?:\.\.\/)+/g, "");
+}
+
+function resolveEpubRelativePath(baseDir: string, href: string): string {
+  return normalizeEpubRelativePath(path.posix.join(baseDir, href));
+}
+
+async function readDirectoryEntryText(rootPath: string, relativePath: string): Promise<string | null> {
+  const filePath = path.resolve(rootPath, relativePath);
+  return fs.readFile(filePath, "utf8").catch(() => null);
+}
+
+async function readZipEntryText(zipPath: string, relativePath: string): Promise<string | null> {
+  const entryPath = normalizeEpubRelativePath(relativePath);
+  try {
+    const { stdout } = await execFileAsync("unzip", ["-p", zipPath, entryPath], {
+      encoding: "utf8",
+      maxBuffer: 10 * 1024 * 1024,
+    });
+    return stdout;
+  } catch {
+    return null;
+  }
+}
+
+async function readEpubEntryText(bookPath: string, isDirectory: boolean, relativePath: string): Promise<string | null> {
+  if (isDirectory) {
+    return readDirectoryEntryText(bookPath, relativePath);
+  }
+  return readZipEntryText(bookPath, relativePath);
+}
+
+function buildChapterTitleMapByHrefResolution(
+  manifestHrefById: Map<string, string>,
+  hrefToTitle: Map<string, string>,
+  opfRelativePath: string,
+  tocRelativePath: string,
+): Map<string, string> {
+  const chapterTitleByKey = new Map<string, string>();
+  const opfDir = path.posix.dirname(opfRelativePath);
+  const tocDir = path.posix.dirname(tocRelativePath);
+  const resolvedTitleByPath = new Map<string, string>();
+
+  for (const [tocHref, title] of hrefToTitle.entries()) {
+    const resolvedTocPath = resolveEpubRelativePath(tocDir, tocHref);
+    if (!resolvedTitleByPath.has(resolvedTocPath)) {
+      resolvedTitleByPath.set(resolvedTocPath, title);
+    }
+  }
+
+  for (const [key, href] of manifestHrefById.entries()) {
+    const contentPath = resolveEpubRelativePath(opfDir, href);
+    const matchedTitle = resolvedTitleByPath.get(contentPath);
     if (matchedTitle) {
       chapterTitleByKey.set(key, matchedTitle);
     }
@@ -187,25 +224,79 @@ export async function readEpubChapterTitleByKey(bookPath: string | null): Promis
   return chapterTitleByKey;
 }
 
+export async function readEpubChapterTitleByKey(bookPath: string | null): Promise<Map<string, string>> {
+  if (!bookPath) {
+    return new Map<string, string>();
+  }
+
+  const stat = await fs.stat(bookPath).catch(() => null);
+  if (!stat || (!stat.isDirectory() && !stat.isFile())) {
+    return new Map<string, string>();
+  }
+  const isDirectory = stat.isDirectory();
+
+  const containerXml = await readEpubEntryText(bookPath, isDirectory, "META-INF/container.xml");
+  if (!containerXml) {
+    return new Map<string, string>();
+  }
+
+  const rootfileRelativePath = normalizeEpubRelativePath(findRootfilePath(containerXml) ?? "OEBPS/content.opf");
+  const opfXml = await readEpubEntryText(bookPath, isDirectory, rootfileRelativePath);
+  if (!opfXml) {
+    return new Map<string, string>();
+  }
+
+  const { manifestHrefById, ncxItemId, navItemId } = parseOpfManifest(opfXml);
+
+  if (ncxItemId) {
+    const ncxHref = manifestHrefById.get(ncxItemId);
+    if (ncxHref) {
+      const ncxRelativePath = resolveEpubRelativePath(path.posix.dirname(rootfileRelativePath), ncxHref);
+      const ncxXml = await readEpubEntryText(bookPath, isDirectory, ncxRelativePath);
+      if (ncxXml) {
+        const hrefToTitle = parseTocHrefTitleMap(ncxXml);
+        if (hrefToTitle.size > 0) {
+          return buildChapterTitleMapByHrefResolution(manifestHrefById, hrefToTitle, rootfileRelativePath, ncxRelativePath);
+        }
+      }
+    }
+  }
+
+  if (navItemId) {
+    const navHref = manifestHrefById.get(navItemId);
+    if (navHref) {
+      const navRelativePath = resolveEpubRelativePath(path.posix.dirname(rootfileRelativePath), navHref);
+      const navXml = await readEpubEntryText(bookPath, isDirectory, navRelativePath);
+      if (navXml) {
+        const hrefToTitle = parseNavHrefTitleMap(navXml);
+        if (hrefToTitle.size > 0) {
+          return buildChapterTitleMapByHrefResolution(manifestHrefById, hrefToTitle, rootfileRelativePath, navRelativePath);
+        }
+      }
+    }
+  }
+
+  return new Map<string, string>();
+}
+
 export async function readEpubChapterOrderByKey(bookPath: string | null): Promise<Map<string, number>> {
   if (!bookPath) {
     return new Map<string, number>();
   }
 
   const stat = await fs.stat(bookPath).catch(() => null);
-  if (!stat?.isDirectory()) {
+  if (!stat || (!stat.isDirectory() && !stat.isFile())) {
     return new Map<string, number>();
   }
+  const isDirectory = stat.isDirectory();
 
-  const containerPath = path.join(bookPath, "META-INF", "container.xml");
-  const containerXml = await fs.readFile(containerPath, "utf8").catch(() => null);
+  const containerXml = await readEpubEntryText(bookPath, isDirectory, "META-INF/container.xml");
   if (!containerXml) {
     return new Map<string, number>();
   }
 
-  const rootfileRelativePath = findRootfilePath(containerXml) ?? "OEBPS/content.opf";
-  const opfPath = path.resolve(bookPath, rootfileRelativePath);
-  const opfXml = await fs.readFile(opfPath, "utf8").catch(() => null);
+  const rootfileRelativePath = normalizeEpubRelativePath(findRootfilePath(containerXml) ?? "OEBPS/content.opf");
+  const opfXml = await readEpubEntryText(bookPath, isDirectory, rootfileRelativePath);
   if (!opfXml) {
     return new Map<string, number>();
   }
