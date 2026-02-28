@@ -14,10 +14,82 @@ const demoBook: Book = {
 };
 
 test("renderIndexMarkdown includes key fields", () => {
-  const output = renderIndexMarkdown([demoBook], new Date("2026-02-01T00:00:00Z"), "books");
-  assert.match(output, /书名/);
-  assert.match(output, /Demo Book/);
-  assert.match(output, /EPUB/);
+  const output = renderIndexMarkdown(
+    [demoBook],
+    new Date("2026-02-01T00:00:00Z"),
+    "books",
+    new Map([[demoBook.assetId, "books/demo-short-name.md"]]),
+    {
+      [demoBook.assetId]: {
+        assetId: demoBook.assetId,
+        title: "demo-short-name",
+        format: "EPUB",
+        hash: "EPUB|mod:1|schema:30",
+        lastSyncedAt: "2026-02-01T00:00:00.000Z",
+        bookFileRelativePath: "books/demo-short-name.md",
+        pdfAssetDirRelativePath: null,
+      },
+    },
+  );
+  assert.match(output, /^---\n/m);
+  assert.match(output, /title: "iBooks Notes Sync Index"/);
+  assert.match(output, /generated_at: "2026-02-01 00:00:00"/);
+  assert.match(output, /book_count: 1/);
+  assert.match(output, /\| 书名 \| 作者 \| 格式 \|/);
+  assert.match(output, /\[\[books\/demo-short-name\]\]/);
+  assert.match(output, /\| Author \| EPUB \|/);
+});
+
+test("renderIndexMarkdown sorts by lastSyncedAt desc without showing timestamp column", () => {
+  const newerBook: Book = {
+    ...demoBook,
+    assetId: "NEWER",
+    title: "Newer",
+    author: "A",
+  };
+  const olderBook: Book = {
+    ...demoBook,
+    assetId: "OLDER",
+    title: "Older",
+    author: "B",
+  };
+
+  const output = renderIndexMarkdown(
+    [olderBook, newerBook],
+    new Date("2026-02-01T00:00:00Z"),
+    "books",
+    new Map([
+      [olderBook.assetId, "books/older.md"],
+      [newerBook.assetId, "books/newer.md"],
+    ]),
+    {
+      [olderBook.assetId]: {
+        assetId: olderBook.assetId,
+        title: "older",
+        format: "EPUB",
+        hash: "EPUB|mod:1|schema:30",
+        lastSyncedAt: "2026-01-01T00:00:00.000Z",
+        bookFileRelativePath: "books/older.md",
+        pdfAssetDirRelativePath: null,
+      },
+      [newerBook.assetId]: {
+        assetId: newerBook.assetId,
+        title: "newer",
+        format: "EPUB",
+        hash: "EPUB|mod:2|schema:30",
+        lastSyncedAt: "2026-02-01T00:00:00.000Z",
+        bookFileRelativePath: "books/newer.md",
+        pdfAssetDirRelativePath: null,
+      },
+    },
+  );
+
+  const newerIndex = output.indexOf("[[books/newer]]");
+  const olderIndex = output.indexOf("[[books/older]]");
+  assert.notEqual(newerIndex, -1);
+  assert.notEqual(olderIndex, -1);
+  assert.ok(newerIndex < olderIndex);
+  assert.doesNotMatch(output, /最后同步/);
 });
 
 test("renderEpubBookMarkdown groups by chapter", () => {

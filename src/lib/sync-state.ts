@@ -46,12 +46,14 @@ function normalizeStateAsset(assetId: string, value: unknown): SyncAssetState | 
 
   const pdfAssetDirRelativePath =
     typeof candidate.pdfAssetDirRelativePath === "string" ? candidate.pdfAssetDirRelativePath : null;
+  const lastSyncedAt = typeof candidate.lastSyncedAt === "string" ? candidate.lastSyncedAt : null;
 
   return {
     assetId,
     title: candidate.title,
     format,
     hash: candidate.hash,
+    lastSyncedAt,
     bookFileRelativePath: candidate.bookFileRelativePath ?? null,
     pdfAssetDirRelativePath,
   };

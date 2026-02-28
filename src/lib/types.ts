@@ -79,6 +79,7 @@ export type SyncAssetState = {
   title: string;
   format: SyncableBookFormat;
   hash: string;
+  lastSyncedAt: string | null;
   bookFileRelativePath: string | null;
   pdfAssetDirRelativePath: string | null;
 };

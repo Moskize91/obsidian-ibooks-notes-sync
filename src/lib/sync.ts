@@ -133,6 +133,7 @@ function toSyncStateAsset(
   snapshot: BookSyncSnapshot,
   bookFileRelativePath: string | null,
   pdfAssetDirRelativePath: string | null,
+  lastSyncedAt: string | null,
 ): SyncAssetState {
   const stateTitle = bookFileRelativePath
     ? path.posix.basename(bookFileRelativePath, ".md")
@@ -142,6 +143,7 @@ function toSyncStateAsset(
     title: stateTitle,
     format: snapshot.book.format,
     hash: snapshot.hash,
+    lastSyncedAt,
     bookFileRelativePath,
     pdfAssetDirRelativePath,
   };
@@ -367,6 +369,7 @@ export async function runSync(config: CliConfig, paths: IBooksPaths, options: Sy
   const outputDir = path.resolve(config.outputDir, config.managedDirName);
   const booksDirName = "books";
   const stagingRoot = path.join(outputDir, ".staging", `${Date.now()}-${process.pid}`);
+  const syncStartedAt = new Date().toISOString();
 
   const stats: SyncStats = {
     totalBooks: books.length,
@@ -379,6 +382,11 @@ export async function runSync(config: CliConfig, paths: IBooksPaths, options: Sy
   const errors: Array<{ title: string; reason: string }> = [];
   const previousState = await readSyncState(outputDir);
   const nextStateAssets: Record<string, SyncAssetState> = { ...previousState.assets };
+  for (const asset of Object.values(nextStateAssets)) {
+    if (!asset.lastSyncedAt && previousState.updatedAt && previousState.updatedAt !== new Date(0).toISOString()) {
+      asset.lastSyncedAt = previousState.updatedAt;
+    }
+  }
 
   const annotationMaxModificationDates = readAnnotationMaxModificationDates(
     paths.annotationDbPath,
@@ -551,7 +559,7 @@ export async function runSync(config: CliConfig, paths: IBooksPaths, options: Sy
             }
             await removeDirectoryIfExists(path.join(outputDir, "assets", "pdf", snapshot.book.assetId));
           }
-          nextStateAssets[snapshot.book.assetId] = toSyncStateAsset(snapshot, null, null);
+          nextStateAssets[snapshot.book.assetId] = toSyncStateAsset(snapshot, null, null, syncStartedAt);
           stats.successBooks += 1;
           continue;
         }
@@ -633,6 +641,7 @@ export async function runSync(config: CliConfig, paths: IBooksPaths, options: Sy
           snapshot,
           nextBookFileRelativePath,
           nextPdfAssetDirRelativePath,
+          syncStartedAt,
         );
         stats.successBooks += 1;
         if (nextBookFileRelativePath) {
@@ -697,7 +706,7 @@ export async function runSync(config: CliConfig, paths: IBooksPaths, options: Sy
       for (const [assetId, asset] of Object.entries(nextStateAssets)) {
         indexBookPaths.set(assetId, asset.bookFileRelativePath);
       }
-      const indexMarkdown = renderIndexMarkdown(indexBooks, new Date(), booksDirName, indexBookPaths);
+      const indexMarkdown = renderIndexMarkdown(indexBooks, new Date(), booksDirName, indexBookPaths, nextStateAssets);
       await writeFileAtomically(path.join(outputDir, "index.md"), indexMarkdown);
       stats.generatedFiles += 1;
     }

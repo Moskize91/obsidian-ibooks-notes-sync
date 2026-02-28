@@ -9,6 +9,7 @@ function buildAsset(assetId: string): SyncAssetState {
     title: assetId,
     format: "PDF",
     hash: "PDF|mod:1|file:1:1|schema:30",
+    lastSyncedAt: "2026-02-28T00:00:00.000Z",
     bookFileRelativePath: `books/${assetId}.md`,
     pdfAssetDirRelativePath: `assets/pdf/${assetId}`,
   };

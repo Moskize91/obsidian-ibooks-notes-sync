@@ -1,5 +1,5 @@
 import path from "node:path";
-import type { Book, EpubAnnotation } from "./types";
+import type { Book, EpubAnnotation, SyncAssetState } from "./types";
 import { normalizeQuoteText } from "./quote-normalize";
 
 type PdfRenderedNote = {
@@ -27,26 +27,45 @@ export function renderIndexMarkdown(
   generatedAt: Date,
   booksDirName: string,
   bookFileRelativePathByAssetId?: Map<string, string | null>,
+  syncAssetStateByAssetId?: Record<string, SyncAssetState>,
 ): string {
   const lines: string[] = [];
-  lines.push("# iBooks Notes Sync Index");
-  lines.push("");
-  lines.push(`- 生成时间: ${fmtDate(generatedAt)}`);
-  lines.push(`- 书籍总数: ${books.length}`);
-  lines.push("");
-  lines.push("| 书名 | 作者 | 格式 | 标注数 | 最后同步 | 文件 |");
-  lines.push("| --- | --- | --- | ---: | --- | --- |");
+  const rows = books
+    .map((book) => {
+      const mapped = bookFileRelativePathByAssetId?.get(book.assetId);
+      const fileName = mapped ?? getBookFileRelativePath(book, booksDirName);
+      if (!fileName) {
+        return null;
+      }
+      const state = syncAssetStateByAssetId?.[book.assetId];
+      const lastSyncedAtEpochMs = state?.lastSyncedAt ? Date.parse(state.lastSyncedAt) : Number.NaN;
+      return {
+        book,
+        fileName,
+        lastSyncedAtEpochMs: Number.isFinite(lastSyncedAtEpochMs) ? lastSyncedAtEpochMs : Number.NEGATIVE_INFINITY,
+      };
+    })
+    .filter((row): row is NonNullable<typeof row> => Boolean(row))
+    .sort((left, right) => {
+      if (left.lastSyncedAtEpochMs !== right.lastSyncedAtEpochMs) {
+        return right.lastSyncedAtEpochMs - left.lastSyncedAtEpochMs;
+      }
+      const leftStem = path.posix.basename(left.fileName, ".md");
+      const rightStem = path.posix.basename(right.fileName, ".md");
+      return leftStem.localeCompare(rightStem);
+    });
 
-  for (const book of books) {
-    const mapped = bookFileRelativePathByAssetId?.get(book.assetId);
-    const fileName = mapped ?? getBookFileRelativePath(book, booksDirName);
-    if (!fileName) {
-      continue;
-    }
-    const fileCell = `[打开](${fileName})`;
-    lines.push(
-      `| ${escapeCell(book.title)} | ${escapeCell(book.author ?? "-")} | ${book.format} | ${book.annotationCount} | ${fmtDate(generatedAt)} | ${fileCell} |`,
-    );
+  pushFrontmatter(lines, [
+    ["title", "iBooks Notes Sync Index"],
+    ["generated_at", fmtDate(generatedAt)],
+    ["book_count", rows.length],
+  ]);
+  lines.push("| 书名 | 作者 | 格式 |");
+  lines.push("| --- | --- | --- |");
+
+  for (const row of rows) {
+    const wikiTarget = row.fileName.replace(/\.md$/i, "");
+    lines.push(`| [[${wikiTarget}]] | ${escapeCell(row.book.author ?? "-")} | ${row.book.format} |`);
   }
 
   lines.push("");
