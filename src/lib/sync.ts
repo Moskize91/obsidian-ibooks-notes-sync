@@ -132,6 +132,7 @@ type BookSyncSnapshot = {
   hash: string;
   bookFileRelativePath: string | null;
   chapterNotes: boolean;
+  hasExplicitChapterNotesProperty: boolean;
   interactiveProperties: BookInteractivePropertyValues;
   pdfAssetDirRelativePath: string | null;
   coverImageRelativePath: string | null;
@@ -273,8 +274,21 @@ function hasUsablePdfOutline(outlineLeaves: PdfOutlineLeaf[]): boolean {
   return outlineLeaves.length > 1;
 }
 
-function shouldDefaultChapterNotes(annotationCount: number, hasChapterStructure: boolean): boolean {
+export function shouldDefaultChapterNotes(annotationCount: number, hasChapterStructure: boolean): boolean {
   return hasChapterStructure && annotationCount > CHAPTER_NOTES_ANNOTATION_THRESHOLD;
+}
+
+export function resolveEffectiveChapterNotes(
+  chapterNotes: boolean,
+  hasPriorState: boolean,
+  hasExplicitChapterNotesProperty: boolean,
+  annotationCount: number,
+  hasChapterStructure: boolean,
+): boolean {
+  if (hasPriorState || hasExplicitChapterNotesProperty) {
+    return chapterNotes;
+  }
+  return shouldDefaultChapterNotes(annotationCount, hasChapterStructure);
 }
 
 function getStateInteractiveProperties(asset: SyncAssetState | undefined): BookInteractivePropertyValues {
@@ -894,6 +908,7 @@ export async function buildSyncPlan(
       hash,
       bookFileRelativePath,
       chapterNotes: interactiveProperties[BOOK_PROPERTY_KEYS.chapterNotes],
+      hasExplicitChapterNotesProperty: false,
       interactiveProperties,
       pdfAssetDirRelativePath:
         book.format === "PDF" && bookFileRelativePath
@@ -908,14 +923,18 @@ export async function buildSyncPlan(
   await Promise.all(
     bookSnapshots.map(async (snapshot) => {
       const previous = previousState.assets[snapshot.book.assetId];
-      if (!previous?.bookFileRelativePath) {
+      const existingMarkdown = await readPreviousBookMarkdown(
+        outputDir,
+        previous?.bookFileRelativePath ?? snapshot.bookFileRelativePath,
+      );
+      if (!existingMarkdown) {
         return;
       }
-      const existingMarkdown = await readPreviousBookMarkdown(outputDir, previous.bookFileRelativePath);
       snapshot.syncPaused = readBookSyncPaused(existingMarkdown);
       snapshot.interactiveProperties = readBookInteractiveProperties(existingMarkdown) ?? getStateInteractiveProperties(previous);
-      snapshot.chapterNotes =
-        readBookChapterNotes(existingMarkdown) ?? snapshot.interactiveProperties[BOOK_PROPERTY_KEYS.chapterNotes];
+      const existingChapterNotes = readBookChapterNotes(existingMarkdown);
+      snapshot.hasExplicitChapterNotesProperty = existingChapterNotes !== null;
+      snapshot.chapterNotes = existingChapterNotes ?? snapshot.interactiveProperties[BOOK_PROPERTY_KEYS.chapterNotes];
     }),
   );
 
@@ -1282,9 +1301,13 @@ export async function runSync(config: SyncConfig, paths: IBooksPaths, options: S
               epubChapterOrderByKey,
               epubChapterTitlePathByKey,
             );
-            effectiveChapterNotes = previousAssetState
-              ? snapshot.chapterNotes
-              : shouldDefaultChapterNotes(epubNotes.length, hasUsableEpubChapterStructure(epubChapterTitleByKey));
+            effectiveChapterNotes = resolveEffectiveChapterNotes(
+              snapshot.chapterNotes,
+              Boolean(previousAssetState),
+              snapshot.hasExplicitChapterNotesProperty,
+              epubNotes.length,
+              hasUsableEpubChapterStructure(epubChapterTitleByKey),
+            );
             const shouldRenderChapterNotes =
               effectiveChapterNotes && hasUsableEpubChapterStructure(epubChapterTitleByKey) && chapters.length > 1;
             if (shouldRenderChapterNotes) {
@@ -1330,9 +1353,13 @@ export async function runSync(config: SyncConfig, paths: IBooksPaths, options: S
             if (snapshot.chapterNotes || !previousAssetState) {
               pdfOutlineLeaves = await readPdfOutlineLeaves(snapshot.book.path).catch(() => []);
             }
-            effectiveChapterNotes = previousAssetState
-              ? snapshot.chapterNotes
-              : shouldDefaultChapterNotes(countPdfRenderedNotes(pdfPages), hasUsablePdfOutline(pdfOutlineLeaves));
+            effectiveChapterNotes = resolveEffectiveChapterNotes(
+              snapshot.chapterNotes,
+              Boolean(previousAssetState),
+              snapshot.hasExplicitChapterNotesProperty,
+              countPdfRenderedNotes(pdfPages),
+              hasUsablePdfOutline(pdfOutlineLeaves),
+            );
             const chapters = buildPdfRenderedChapters(pdfPages, pdfOutlineLeaves);
             const shouldRenderChapterNotes = effectiveChapterNotes && hasUsablePdfOutline(pdfOutlineLeaves) && chapters.length > 1;
             if (shouldRenderChapterNotes) {

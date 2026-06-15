@@ -4,6 +4,8 @@ import {
   getSyncPlanRegenerateReason,
   hasLegacyEpubInternalChapterHeadingContent,
   hasRenderablePdfPageAnnotations,
+  resolveEffectiveChapterNotes,
+  shouldDefaultChapterNotes,
   shouldForcePdfResync,
 } from "../src/lib/sync";
 import type { PdfPageAnnotations, SyncAssetState } from "../src/lib/types";
@@ -127,6 +129,19 @@ test("getSyncPlanRegenerateReason explains why an asset needs sync", () => {
     ),
     null,
   );
+});
+
+test("shouldDefaultChapterNotes enables chapter notes for first sync with many structured annotations", () => {
+  assert.equal(shouldDefaultChapterNotes(25, true), false);
+  assert.equal(shouldDefaultChapterNotes(26, true), true);
+  assert.equal(shouldDefaultChapterNotes(26, false), false);
+});
+
+test("resolveEffectiveChapterNotes prefers existing property over first-sync default", () => {
+  assert.equal(resolveEffectiveChapterNotes(false, false, true, 26, true), false);
+  assert.equal(resolveEffectiveChapterNotes(true, false, true, 0, false), true);
+  assert.equal(resolveEffectiveChapterNotes(false, false, false, 26, true), true);
+  assert.equal(resolveEffectiveChapterNotes(false, true, false, 26, true), false);
 });
 
 test("hasLegacyEpubInternalChapterHeadingContent detects internal chapter headings", () => {
